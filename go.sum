@@ -16,8 +16,6 @@ github.com/mailru/easyjson v0.7.0 h1:aizVhC/NAAcKWb+5QsU1iNOZb4Yws5UO2I+aIprQITM
 github.com/mailru/easyjson v0.7.0/go.mod h1:KAzv3t3aY1NaHWoQz1+4F1ccyAH66Jk7yos7ldAVICs=
 github.com/marknown/ohttp v1.0.3 h1:WPNVTeqrvQBMebd5dRsrJq1rWL+QTolAmbz0dDApzMM=
 github.com/marknown/ohttp v1.0.3/go.mod h1:AYXnqCfB0RagWu43w35d7j5nCIm/OjHZFaAGy0aCGKc=
-github.com/marknown/util v1.0.3 h1:hrSHn8zUkfYFiWuTUw1w9HqIz9pKMl1S2uzvvLjUYCU=
-github.com/marknown/util v1.0.3/go.mod h1:4t+JIMMU6Wu35GV3E6KSX9bLNYWfop+sGTQXJVMHtaM=
 golang.org/x/sys v0.0.0-20191113165036-4c7a9d0fe056/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd h1:xhmwyvizuTgC2qz7ZlMluP20uW+C3Rm0FD/WLDX8884=
 golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=

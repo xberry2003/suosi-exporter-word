@@ -1,184 +1,372 @@
 package logic
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
-	"path"
+	"path/filepath"
+	"sort"
 	"strings"
-	"thoughtsexport/libs/request"
+	"time"
+
 	"thoughtsexport/libs/utils"
 )
 
-var rootPath = ""
-
-func ExportOne(url string, cookie string, fileType string) {
-	parts := strings.Split(url, "/")
-	hashSpace := parts[4]
-
-	req := request.NewRequest(cookie, hashSpace)
-
-	workspace, err := req.GetWorkspace(hashSpace)
-	if nil != err {
-		panic(err)
-	}
-
-	// 如果没有导出权限，开启导出权限
-	needCloseOutput := false
-	if workspace.WorkspaceSecurity.DisableOutput {
-
-		succeed, err := req.EnableOutput(hashSpace, true)
-		if nil != err {
-			panic(err)
-		}
-
-		if !succeed {
-			panic("本文档无法下载，开启导出权限失败。请文档所有者在本工具登录后再尝试")
-		}
-
-		// 之前没有导出权限，现在临时开启，下载完成要关闭导出权限
-		needCloseOutput = true
-	}
-
-	prefixPath := fmt.Sprintf("%s/%s", workspace.Organization.Name, workspace.Name)
-	SetRootPath(GetCurrentDirectory() + "/" + prefixPath)
-	fmt.Printf("所有文件将保存至 %s\n", GetRootPath())
-
-	nodes, err := req.GetAllNodes(hashSpace, "")
-	if nil != err {
-		panic(err)
-	}
-	fmt.Printf("分析完成 %s\n", prefixPath)
-
-	total := len(nodes)
-	counter := 0
-	for _, node := range nodes {
-		counter++
-		fmt.Printf("当前进度 %d/%d [%.2f%%] 正在下载文档 %s \r", counter, total, float64(counter)*float64(100)/float64(total), node.Path)
-
-		if node.Type == "folder" {
-			// log.Println("我是空目录" + node.Path)
-			CreateDir(node.Path + "/")
-		} else if node.Type == "document" {
-			// 下载 docx
-			if fileType == "all" || fileType == "docx" {
-				downloadInfo, err := req.GetDownloadUrl(node.ID, node.Path, "docx")
-				if nil != err {
-					LogDownloadFailedInfo(node, err)
-					continue
-				}
-
-				_, err = DownloadFile(downloadInfo.DownURL, GetRootPath()+downloadInfo.FullPath)
-				if nil != err {
-					LogDownloadFailedInfo(node, err)
-					continue
-				}
-			}
-
-			// 下载 html
-			if fileType == "all" || fileType == "html" {
-				downloadInfo, err := req.GetDownloadUrl(node.ID, node.Path, "html")
-				if nil != err {
-					LogDownloadFailedInfo(node, err)
-					continue
-				}
-
-				_, err = DownloadFile(downloadInfo.DownURL, GetRootPath()+downloadInfo.FullPath)
-				if nil != err {
-					LogDownloadFailedInfo(node, err)
-					continue
-				}
-			}
-		} else {
-			downloadInfo, err := req.GetDownloadUrlByDetail(node.ID, node.Path)
-			if nil != err {
-				LogDownloadFailedInfo(node, err)
-				continue
-			}
-
-			_, err = DownloadFile(downloadInfo.DownURL, GetRootPath()+downloadInfo.FullPath)
-			if nil != err {
-				LogDownloadFailedInfo(node, err)
-				continue
-			}
-		}
-
-		fmt.Printf("[已完成] %s\n", node.Path)
-	}
-
-	fmt.Printf("所有文件已保存至 %s\n", GetRootPath())
-
-	// 关闭导出权限
-	if needCloseOutput {
-		_, err := req.EnableOutput(hashSpace, false)
-		if nil != err {
-			panic(err)
-		}
-	}
+type ExportOptions struct {
+	URL         string
+	OutputRoot  string
+	Format      string
+	Overwrite   bool
+	RetryFailed bool
+	DryRun      bool
+	MockData    string
 }
 
-func CreateDir(fullPath string) error {
-	dirPath := path.Dir(fullPath)
-
-	_, err := os.Stat(dirPath)
-	if err == nil {
-		return nil
+func ExportWorkspace(opts ExportOptions) error {
+	if opts.OutputRoot == "" {
+		opts.OutputRoot = "exports"
 	}
+	if opts.Format == "" {
+		opts.Format = "docx"
+	}
+	if err := os.MkdirAll(opts.OutputRoot, 0755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll("logs", 0755); err != nil {
+		return err
+	}
+	logFile := filepath.Join("logs", "export_"+time.Now().Format("20060102_150405")+".log")
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	logger := log.New(f, "", log.LstdFlags)
+	logger.Printf("start export url=%s output=%s format=%s dryRun=%v mock=%s", opts.URL, opts.OutputRoot, opts.Format, opts.DryRun, opts.MockData)
 
-	if os.IsNotExist(err) {
-		err = os.MkdirAll(dirPath, os.ModePerm)
+	if opts.MockData != "" {
+		return runMockExport(opts, logger)
+	}
+	if opts.URL == "" {
+		return errors.New("url is required")
+	}
+	parts := strings.Split(opts.URL, "/")
+	if len(parts) < 5 {
+		return fmt.Errorf("URL 格式不正确: %s", opts.URL)
+	}
+	hashSpace := parts[4]
+	req := NewRequest("", hashSpace)
+	cookie := GetLoginCookieString(opts.URL, "TB_ACCESS_TOKEN")
+	req.cookie = cookie
+
+	workspace, err := req.GetWorkspace(hashSpace)
+	if err != nil {
+		return err
+	}
+	needCloseOutput := false
+	if workspace.WorkspaceSecurity.DisableOutput {
+		succeed, err := req.EnableOutput(hashSpace, true)
 		if err != nil {
 			return err
 		}
+		if !succeed {
+			return errors.New("本文档无法下载，开启导出权限失败。请文档所有者在本工具登录后再尝试")
+		}
+		needCloseOutput = true
+	}
+	defer func() {
+		if needCloseOutput {
+			_, _ = req.EnableOutput(hashSpace, false)
+		}
+	}()
 
-		// err = os.Chmod(dirPath, os.ModeDir)
-		// if err != nil {
-		// 	return err
-		// }
+	orgName := sanitizeName(workspace.Organization.Name)
+	spaceName := sanitizeName(workspace.Name)
+	workspaceRoot := filepath.Join(opts.OutputRoot, orgName, spaceName)
+	if err := os.MkdirAll(workspaceRoot, 0755); err != nil {
+		return err
+	}
+	manifestPath := filepath.Join(workspaceRoot, "manifest.json")
+	store := NewManifestStore(manifestPath)
+	_ = store.Load()
+
+	nodes, err := req.GetAllNodes(hashSpace, "")
+	if err != nil {
+		return err
+	}
+	tree := buildNodeTree(nodes, hashSpace)
+	logger.Printf("workspace ready: %s/%s nodes=%d", orgName, spaceName, len(nodes))
+
+	if opts.DryRun {
+		logger.Println("dry-run enabled, only rendering tree")
+		return renderTreeToFile(filepath.Join(workspaceRoot, "dry_run_tree.txt"), tree)
+	}
+	return exportChildren(req, opts, logger, store, workspaceRoot, "", tree.Roots)
+}
+
+type treeNode struct {
+	Node     *Node
+	Children []*treeNode
+}
+
+type nodeTree struct {
+	Roots []*treeNode
+}
+
+func buildNodeTree(nodes []*Node, workspaceHash string) nodeTree {
+	nodeByID := map[string]*treeNode{}
+	childrenByParent := map[string][]*treeNode{}
+	for _, n := range nodes {
+		nodeByID[n.ID] = &treeNode{Node: n}
+	}
+	for _, n := range nodes {
+		parent := n.ParentId
+		if parent == "" || parent == workspaceHash {
+			continue
+		}
+		childrenByParent[parent] = append(childrenByParent[parent], nodeByID[n.ID])
+	}
+	roots := []*treeNode{}
+	for _, n := range nodes {
+		if n.ParentId == "" || n.ParentId == workspaceHash {
+			roots = append(roots, nodeByID[n.ID])
+		}
+	}
+	for id, tn := range nodeByID {
+		tn.Children = childrenByParent[id]
+	}
+	sort.Slice(roots, func(i, j int) bool { return roots[i].Node.Title < roots[j].Node.Title })
+	return nodeTree{Roots: roots}
+}
+
+func exportChildren(req *Request, opts ExportOptions, logger *log.Logger, store *ManifestStore, parentDir string, parentTitle string, children []*treeNode) error {
+	used := map[string]int{}
+	sort.Slice(children, func(i, j int) bool { return children[i].Node.Title < children[j].Node.Title })
+	for _, child := range children {
+		if err := exportSingle(req, opts, logger, store, parentDir, parentTitle, child, used); err != nil {
+			logger.Printf("failed: %s %v", child.Node.Title, err)
+		}
+	}
+	return nil
+}
+
+func exportSingle(req *Request, opts ExportOptions, logger *log.Logger, store *ManifestStore, parentDir string, parentTitle string, current *treeNode, used map[string]int) error {
+	node := current.Node
+	baseName := resolveUniqueName(parentDir, sanitizeName(node.Title), used, len(current.Children) > 0)
+	entry := ManifestEntry{
+		Title:      node.Title,
+		NodeID:     node.ID,
+		URL:        node.ID,
+		Parent:     parentTitle,
+		Status:     "pending",
+		ExportTime: time.Now().Format(time.RFC3339),
 	}
 
+	if len(current.Children) > 0 {
+		dirPath := filepath.Join(parentDir, baseName)
+		entry.LocalPath = filepath.Join(dirPath, baseName+".docx")
+		if store.ShouldSkip(entry, opts.Overwrite, opts.RetryFailed) {
+			entry.Status = "skipped"
+			store.Upsert(entry)
+			_ = store.Save()
+			return nil
+		}
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			entry.Status = "failed"
+			entry.Reason = err.Error()
+			store.Upsert(entry)
+			_ = store.Save()
+			return err
+		}
+		if err := exportNodeDoc(req, opts, node, dirPath, baseName); err != nil {
+			entry.Status = "failed"
+			entry.Reason = err.Error()
+			store.Upsert(entry)
+			_ = store.Save()
+		} else {
+			entry.Status = "success"
+			store.Upsert(entry)
+			_ = store.Save()
+		}
+		return exportChildren(req, opts, logger, store, dirPath, node.Title, current.Children)
+	}
+
+	entry.LocalPath = filepath.Join(parentDir, baseName+".docx")
+	if store.ShouldSkip(entry, opts.Overwrite, opts.RetryFailed) {
+		entry.Status = "skipped"
+		store.Upsert(entry)
+		_ = store.Save()
+		return nil
+	}
+	if err := exportNodeDoc(req, opts, node, parentDir, baseName); err != nil {
+		entry.Status = "failed"
+		entry.Reason = err.Error()
+		store.Upsert(entry)
+		_ = store.Save()
+		return err
+	}
+	entry.Status = "success"
+	store.Upsert(entry)
+	return store.Save()
+}
+
+func exportNodeDoc(req *Request, opts ExportOptions, node *Node, baseDir string, baseName string) error {
+	target := filepath.Join(baseDir, baseName+".docx")
+	if opts.Format == "html" {
+		target = filepath.Join(baseDir, baseName+".html")
+	}
+	if utils.FileExist(target) && !opts.Overwrite {
+		return nil
+	}
+	if opts.DryRun {
+		return nil
+	}
+	var downloadInfo *NodeDownload
+	var err error
+	if opts.Format == "html" {
+		downloadInfo, err = req.GetDownloadUrl(node.ID, baseName, "html")
+	} else {
+		downloadInfo, err = req.GetDownloadUrl(node.ID, baseName, "docx")
+	}
+	if err != nil {
+		downloadInfo, err = req.GetDownloadUrlByDetail(node.ID, baseName)
+		if err != nil {
+			return err
+		}
+	}
+	return DownloadFile(downloadInfo.DownURL, target, opts.Overwrite)
+}
+
+func DownloadFile(url string, filePath string, overwrite bool) error {
+	if utils.FileExist(filePath) && !overwrite {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, err = io.Copy(file, resp.Body)
 	return err
 }
 
-func DownloadFile(url string, filepath string) (int64, error) {
-	if utils.FileExist(filepath) {
-		return 0, nil
+func sanitizeName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "untitled"
 	}
+	replacer := strings.NewReplacer(`\`, "_", `/`, "_", `:`, "_", `*`, "_", `?`, "_", `"`, "_", `<`, "_", `>`, "_", `|`, "_")
+	name = replacer.Replace(name)
+	name = strings.Trim(name, ". ")
+	if name == "" {
+		return "untitled"
+	}
+	return name
+}
 
-	CreateDir(filepath)
-	file, err := os.OpenFile(filepath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+func resolveUniqueName(parentDir, baseName string, used map[string]int, isDir bool) string {
+	name := baseName
+	if name == "" {
+		name = "untitled"
+	}
+	counter := used[name]
+	for {
+		actual := name
+		if counter > 0 {
+			actual = fmt.Sprintf("%s_%d", name, counter+1)
+		}
+		target := filepath.Join(parentDir, actual)
+		if isDir {
+			if _, err := os.Stat(target); os.IsNotExist(err) {
+				used[name] = counter + 1
+				return actual
+			}
+		} else {
+			doc := target + ".docx"
+			if _, err := os.Stat(doc); os.IsNotExist(err) {
+				used[name] = counter + 1
+				return actual
+			}
+		}
+		counter++
+	}
+}
+
+func renderTreeToFile(path string, tree nodeTree) error {
+	var lines []string
+	var walk func(prefix string, n *treeNode)
+	walk = func(prefix string, n *treeNode) {
+		lines = append(lines, prefix+n.Node.Title)
+		for _, child := range n.Children {
+			walk(prefix+"  ", child)
+		}
+	}
+	for _, root := range tree.Roots {
+		walk("", root)
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
+}
+
+func runMockExport(opts ExportOptions, logger *log.Logger) error {
+	mockPath := opts.MockData
+	if mockPath == "" {
+		mockPath = filepath.Join("mock", "mock_directory_tree.json")
+	}
+	data, err := os.ReadFile(mockPath)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	defer file.Close()
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return 0, err
+	var tree []MockNode
+	if err := json.Unmarshal(data, &tree); err != nil {
+		return err
 	}
-	defer resp.Body.Close()
-
-	n, err := io.Copy(file, resp.Body)
-
-	return n, err
+	root := filepath.Join(opts.OutputRoot, "企业名称", "知识库名称")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return err
+	}
+	return createMockTree(root, tree, logger)
 }
 
-func LogFailedInfo(info string) {
-	path := GetRootPath() + "/下载失败的文件清单.txt"
-	utils.FileAppend(path, info)
+type MockNode struct {
+	Title    string     `json:"title"`
+	HasChild bool       `json:"has_child"`
+	Children []MockNode `json:"children"`
 }
 
-func LogDownloadFailedInfo(node *request.Node, err error) {
-	info := fmt.Sprintf("%s %s\n", node.Path, err.Error())
-	LogFailedInfo(info)
-	fmt.Println(info)
-}
-
-func SetRootPath(path string) {
-	rootPath = path
-}
-
-func GetRootPath() string {
-	return rootPath
+func createMockTree(parentDir string, nodes []MockNode, logger *log.Logger) error {
+	used := map[string]int{}
+	for _, n := range nodes {
+		name := resolveUniqueName(parentDir, sanitizeName(n.Title), used, len(n.Children) > 0 || n.HasChild)
+		if len(n.Children) > 0 || n.HasChild {
+			dir := filepath.Join(parentDir, name)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return err
+			}
+			doc := filepath.Join(dir, name+".docx")
+			if err := os.WriteFile(doc, []byte("mock"), 0644); err != nil {
+				return err
+			}
+			if err := createMockTree(dir, n.Children, logger); err != nil {
+				return err
+			}
+			continue
+		}
+		doc := filepath.Join(parentDir, name+".docx")
+		if err := os.WriteFile(doc, []byte("mock"), 0644); err != nil {
+			return err
+		}
+	}
+	return nil
 }

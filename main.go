@@ -1,194 +1,152 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
+	"flag"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
-	"thoughtsexport/libs/logic"
-	"thoughtsexport/libs/utils"
+	"sync"
 
-	"github.com/marknown/util"
+	"thoughtsexport/libs/logic"
 )
 
-var isDownloading = false
+const defaultListenAddr = "127.0.0.1:43821"
+
+var (
+	runMu   sync.Mutex
+	running bool
+)
+
+type cliConfig struct {
+	URL         string
+	Output      string
+	Format      string
+	Overwrite   bool
+	RetryFailed bool
+	DryRun      bool
+	MockData    string
+	Serve       bool
+}
 
 func main() {
-	// 打开本地浏览器
-	errOpen := util.Open("http://127.0.0.1:43821/submit/url")
-	if errOpen != nil {
-		fmt.Println(errOpen.Error())
+	cfg := parseFlags()
+	if cfg.Serve || cfg.URL == "" {
+		startWebMode(cfg)
+		return
 	}
+	if err := execute(cfg); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	http.HandleFunc("/submit/url", func(w http.ResponseWriter, r *http.Request) {
-		if isDownloading {
-			fmt.Fprintf(w, "%s", "下载任务正在进行中，本页面可以关闭，具体看黑色窗口的输出")
+func parseFlags() cliConfig {
+	cfg := cliConfig{}
+	flag.StringVar(&cfg.URL, "url", "", "workspace URL")
+	flag.StringVar(&cfg.Output, "output", filepath.Join("exports"), "output root")
+	flag.StringVar(&cfg.Format, "format", "docx", "export format")
+	flag.BoolVar(&cfg.Overwrite, "overwrite", false, "overwrite existing files")
+	flag.BoolVar(&cfg.RetryFailed, "retry-failed", false, "retry failed items")
+	flag.BoolVar(&cfg.DryRun, "dry-run", false, "dry run only")
+	flag.StringVar(&cfg.MockData, "mock-data", "", "mock tree json file")
+	flag.BoolVar(&cfg.Serve, "serve", false, "force web mode")
+	flag.Parse()
+	return cfg
+}
+
+func startWebMode(cfg cliConfig) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		const tpl = `<!doctype html><html><head><meta charset="utf-8"><title>Thoughts Export</title>
+<style>body{font-family:Arial,sans-serif;margin:32px auto;max-width:900px}input,select{width:100%;padding:8px;margin:6px 0 16px}button{padding:10px 18px}</style>
+</head><body><h1>Thoughts Export</h1>
+<form method="POST" action="/receive/url">
+<label>Workspace URL</label><input name="url" placeholder="https://thoughts.teambition.com/workspaces/.../overview" />
+<label>Output root</label><input name="output" value="exports" />
+<label>Format</label><select name="format"><option value="docx">docx</option><option value="html">html</option></select>
+<label><input type="checkbox" name="overwrite" /> overwrite</label><br>
+<label><input type="checkbox" name="retry_failed" /> retry failed</label><br>
+<button type="submit">Start</button>
+</form></body></html>`
+		_ = template.Must(template.New("web").Parse(tpl)).Execute(w, nil)
+	})
+	mux.HandleFunc("/receive/url", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		next := cliConfig{
+			URL:         r.FormValue("url"),
+			Output:      firstNonEmpty(r.FormValue("output"), cfg.Output, "exports"),
+			Format:      firstNonEmpty(r.FormValue("format"), cfg.Format, "docx"),
+			Overwrite:   r.FormValue("overwrite") == "on",
+			RetryFailed: r.FormValue("retry_failed") == "on",
+			DryRun:      cfg.DryRun,
+			MockData:    cfg.MockData,
+		}
+		if next.URL == "" {
+			http.Error(w, "url is required", http.StatusBadRequest)
 			return
 		}
-
-		const tpl = `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta http-equiv="X-UA-Compatible" content="ie=edge">
-	<title>请填写要下载的知识库地址</title>
-	<style>
-		body{margin:0}
-		#main{width:800px;margin:auto;}
-		#main div {line-height:20px;}
-		#tips{color:red;}
-		.url-input{width:538px;height:20px;font-size:12px;}
-	</style>
-	<script type="text/javascript">
-	var Ajax = {
-		post: function(url, data, fn) { // data 应为'a=a1&b=b1'这种字符串格式
-			var xhr = new XMLHttpRequest();
-			xhr.open("POST", url, true);
-			// 添加http头，发送信息至服务器时内容编码类型
-			xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-			xhr.onreadystatechange = function() {
-				if(xhr.readyState == 4 && (xhr.status == 200 || xhr.status == 304)) {
-					fn.call(this, xhr.responseText);
-				}
-			};
-			xhr.send(data);
+		runMu.Lock()
+		if running {
+			runMu.Unlock()
+			writeJSON(w, map[string]interface{}{"success": true, "message": "task already running"})
+			return
 		}
-	}
-
-	function submitURL() {
-		let url = document.getElementById('url').value
-		let type = document.getElementById('type').value
-		let parts = url.split("/")
-		if (parts[2] != "thoughts.teambition.com") {
-			showTips("链接必须是 https://thoughts.teambition.com/workspaces/xxxxxx/overview 格式");
-			return;
-		}
-		if (parts[3] != "workspaces") {
-			showTips("链接必须是 https://thoughts.teambition.com/workspaces/xxxxxx/overview 格式");
-			return;
-		}
-
-		Ajax.post("/receive/url", "url="+url+"&type="+type, function (response) {
-			try {
-				var obj = JSON.parse(response)
-				if (!obj.success) {
-					showTips(obj.message)
-				} else {
-					hideAction()
-					showTips(obj.message)
-				}
-			} catch(e) {
-				// alert(e + "\norigin：" + response)
-				showTips(e + "\norigin：" + response)
+		running = true
+		runMu.Unlock()
+		go func() {
+			defer func() {
+				runMu.Lock()
+				running = false
+				runMu.Unlock()
+			}()
+			if err := execute(next); err != nil {
+				log.Println(err)
 			}
-		});
-	}
-
-	function showTips(msg) {
-		let tipsObj = document.getElementById('tips')
-		tipsObj.innerText = msg
-	}
-	
-	function hideAction() {
-		let action = document.getElementById('action')
-		action.style.display = "none"
-	}
-</script>
-</head>
-<body>
-	<div id="main">
-		<div>请在下面的输入框中输入要下载的知识库地址。注意事项：1. 请安装 Chrome 谷歌浏览器，下一步会用到。</div>
-		<div style="font-size:12px;">格式：https://thoughts.teambition.com/workspaces/xxxxxx/overview</div>
-		<div id="action">
-			<input id="url" class="url-input"/>
-			格式<select id="type">
-				<option value="docx">仅word文档</option>
-				<option value="html">仅html格式</option>
-				<option value="all">以上格式一起导出</option>
-			</select>
-			<input type="button" value="开始导出" onclick="submitURL()"/>
-		</div>
-		<div id="tips"></div>
-	</div>
-</body>
-</html>`
-
-		tmpl := template.Must(template.New("image").Parse(tpl))
-		tmpl.Execute(w, nil)
+			os.Exit(0)
+		}()
+		writeJSON(w, map[string]interface{}{"success": true, "message": "task started"})
 	})
-
-	http.HandleFunc("/receive/url", func(w http.ResponseWriter, r *http.Request) {
-		type response struct {
-			Success bool   `json:"success"`
-			Message string `json:"message"`
+	srv := &http.Server{Addr: defaultListenAddr, Handler: mux}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Println(err)
 		}
+	}()
+	_ = logic.OpenURL("http://" + defaultListenAddr + "/")
+	select {}
+}
 
-		res := response{
-			Success: true,
-			Message: "下载任务正在进行中，本页面可以关闭。请在接下来弹出的窗口里登录所思账号，只有登录了才能开始导出文档。",
-		}
-
-		url := r.FormValue("url")
-		fileType := r.FormValue("type")
-
-		parts := strings.Split(url, "/")
-
-		if isDownloading {
-			res.Success = true
-			res.Message = "下载任务正在进行中，请不要重复操作，本页面可以关闭"
-		} else if !utils.SliceContainStr([]string{"docx", "html", "all"}, fileType) {
-			res.Success = false
-			res.Message = fmt.Sprintf("%s类型不支持导出", fileType)
-		} else if len(parts) < 5 {
-			res.Success = false
-			res.Message = "链接必须是 https://thoughts.teambition.com/workspaces/xxxxxx/overview 格式"
-		} else if parts[2] != "thoughts.teambition.com" {
-			res.Success = false
-			res.Message = "链接必须是 https://thoughts.teambition.com/workspaces/xxxxxx/overview 格式"
-		} else if parts[3] != "workspaces" {
-			res.Success = false
-			res.Message = "链接必须是 https://thoughts.teambition.com/workspaces/xxxxxx/overview 格式"
-		}
-
-		json, err := utils.ToJson(res)
-		if err != nil {
-			res.Success = false
-			res.Message = "json格式化失败：" + err.Error()
-		}
-
-		// fmt.Println(url)
-		// fmt.Println(fileType)
-
-		// 如果检查成功后，就开始导出文档
-		if res.Success {
-			// 异步导出文档
-			go func(url string) {
-				// 标记为下载中
-				isDownloading = true
-
-				var loginURL = url
-				// 调用 chrome 来登录，并获取登录后的 cookie ，请保证本机安装了 chome 浏览器
-				cookie := logic.GetLoginCookieString(loginURL, "TB_ACCESS_TOKEN")
-				// 开始导出一个知识库
-				logic.ExportOne(loginURL, cookie, fileType)
-
-				// 标记为非下载中
-				isDownloading = false
-
-				// 下载完成后，退出程序
-				os.Exit(0)
-			}(url)
-		}
-
-		fmt.Fprintf(w, "%s", json)
-	})
-
-	err := http.ListenAndServe(":43821", nil)
-
-	if err != nil {
-		log.Fatal(err.Error())
+func execute(cfg cliConfig) error {
+	if cfg.Format == "" {
+		cfg.Format = "docx"
 	}
+	cfg.Output = firstNonEmpty(cfg.Output, "exports")
+	return logic.ExportWorkspace(logic.ExportOptions{
+		URL:         cfg.URL,
+		OutputRoot:  cfg.Output,
+		Format:      cfg.Format,
+		Overwrite:   cfg.Overwrite,
+		RetryFailed: cfg.RetryFailed,
+		DryRun:      cfg.DryRun,
+		MockData:    cfg.MockData,
+	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(v)
 }

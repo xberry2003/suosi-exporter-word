@@ -1,0 +1,45 @@
+[
+  {
+    "title": "一级文档A",
+    "has_child": true,
+    "children": [
+      {
+        "title": "二级文档A1",
+        "has_child": false,
+        "children": []
+      },
+      {
+        "title": "二级文档A2",
+        "has_child": true,
+        "children": [
+          {
+            "title": "三级文档A2-1",
+            "has_child": false,
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "一级文档B",
+    "has_child": false,
+    "children": []
+  },
+  {
+    "title": "非法字符:文档/测试*?",
+    "has_child": false,
+    "children": []
+  },
+  {
+    "title": "同名文档",
+    "has_child": false,
+    "children": []
+  },
+  {
+    "title": "同名文档",
+    "has_child": false,
+    "children": []
+  }
+]
+
