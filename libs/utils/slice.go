@@ -17,4 +17,3 @@ func SliceContainInt(src []int, value int) bool {
 	}
 	return false
 }
-

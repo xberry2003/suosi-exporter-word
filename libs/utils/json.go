@@ -25,4 +25,3 @@ func JSONPToStruct(s string, v interface{}) error {
 	}
 	return errors.New("input is not valid jsonp string")
 }
-

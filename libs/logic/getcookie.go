@@ -99,4 +99,3 @@ func WaitLoginReturnCookieString(ctx context.Context, waitCookieKey string) stri
 	}
 	return cookieStr
 }
-

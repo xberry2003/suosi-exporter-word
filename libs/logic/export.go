@@ -144,19 +144,17 @@ func buildNodeTree(nodes []*Node, workspaceHash string) nodeTree {
 }
 
 func exportChildren(req *Request, opts ExportOptions, logger *log.Logger, store *ManifestStore, parentDir string, parentTitle string, children []*treeNode) error {
-	used := map[string]int{}
 	sort.Slice(children, func(i, j int) bool { return children[i].Node.Title < children[j].Node.Title })
 	for _, child := range children {
-		if err := exportSingle(req, opts, logger, store, parentDir, parentTitle, child, used); err != nil {
+		if err := exportSingle(req, opts, logger, store, parentDir, parentTitle, child); err != nil {
 			logger.Printf("failed: %s %v", child.Node.Title, err)
 		}
 	}
 	return nil
 }
 
-func exportSingle(req *Request, opts ExportOptions, logger *log.Logger, store *ManifestStore, parentDir string, parentTitle string, current *treeNode, used map[string]int) error {
+func exportSingle(req *Request, opts ExportOptions, logger *log.Logger, store *ManifestStore, parentDir string, parentTitle string, current *treeNode) error {
 	node := current.Node
-	baseName := resolveUniqueName(parentDir, sanitizeName(node.Title), used, len(current.Children) > 0)
 	entry := ManifestEntry{
 		Title:      node.Title,
 		NodeID:     node.ID,
@@ -166,14 +164,34 @@ func exportSingle(req *Request, opts ExportOptions, logger *log.Logger, store *M
 		ExportTime: time.Now().Format(time.RFC3339),
 	}
 
+	if old, ok := store.Get(node.ID); ok {
+		if old.LocalPath != "" {
+			entry.LocalPath = old.LocalPath
+		}
+		if old.Parent != "" {
+			entry.Parent = old.Parent
+		}
+		if old.Title != "" {
+			entry.Title = old.Title
+		}
+	}
+
+	if entry.LocalPath == "" {
+		baseName := sanitizeName(node.Title)
+		if len(current.Children) > 0 {
+			entry.LocalPath = filepath.Join(parentDir, baseName, baseName+".docx")
+		} else {
+			entry.LocalPath = filepath.Join(parentDir, baseName+".docx")
+		}
+	}
+
 	if len(current.Children) > 0 {
-		dirPath := filepath.Join(parentDir, baseName)
-		entry.LocalPath = filepath.Join(dirPath, baseName+".docx")
-		if store.ShouldSkip(entry, opts.Overwrite, opts.RetryFailed) {
+		dirPath := filepath.Dir(entry.LocalPath)
+		if utils.FileExist(entry.LocalPath) && !opts.Overwrite {
 			entry.Status = "skipped"
 			store.Upsert(entry)
 			_ = store.Save()
-			return nil
+			return exportChildren(req, opts, logger, store, dirPath, node.Title, current.Children)
 		}
 		if err := os.MkdirAll(dirPath, 0755); err != nil {
 			entry.Status = "failed"
@@ -182,7 +200,7 @@ func exportSingle(req *Request, opts ExportOptions, logger *log.Logger, store *M
 			_ = store.Save()
 			return err
 		}
-		if err := exportNodeDoc(req, opts, node, dirPath, baseName); err != nil {
+		if err := exportNodeDoc(req, opts, node, entry.LocalPath); err != nil {
 			entry.Status = "failed"
 			entry.Reason = err.Error()
 			store.Upsert(entry)
@@ -195,14 +213,20 @@ func exportSingle(req *Request, opts ExportOptions, logger *log.Logger, store *M
 		return exportChildren(req, opts, logger, store, dirPath, node.Title, current.Children)
 	}
 
-	entry.LocalPath = filepath.Join(parentDir, baseName+".docx")
-	if store.ShouldSkip(entry, opts.Overwrite, opts.RetryFailed) {
+	if utils.FileExist(entry.LocalPath) && !opts.Overwrite {
 		entry.Status = "skipped"
 		store.Upsert(entry)
 		_ = store.Save()
 		return nil
 	}
-	if err := exportNodeDoc(req, opts, node, parentDir, baseName); err != nil {
+	if err := os.MkdirAll(filepath.Dir(entry.LocalPath), 0755); err != nil {
+		entry.Status = "failed"
+		entry.Reason = err.Error()
+		store.Upsert(entry)
+		_ = store.Save()
+		return err
+	}
+	if err := exportNodeDoc(req, opts, node, entry.LocalPath); err != nil {
 		entry.Status = "failed"
 		entry.Reason = err.Error()
 		store.Upsert(entry)
@@ -214,11 +238,7 @@ func exportSingle(req *Request, opts ExportOptions, logger *log.Logger, store *M
 	return store.Save()
 }
 
-func exportNodeDoc(req *Request, opts ExportOptions, node *Node, baseDir string, baseName string) error {
-	target := filepath.Join(baseDir, baseName+".docx")
-	if opts.Format == "html" {
-		target = filepath.Join(baseDir, baseName+".html")
-	}
+func exportNodeDoc(req *Request, opts ExportOptions, node *Node, target string) error {
 	if utils.FileExist(target) && !opts.Overwrite {
 		return nil
 	}
@@ -228,12 +248,12 @@ func exportNodeDoc(req *Request, opts ExportOptions, node *Node, baseDir string,
 	var downloadInfo *NodeDownload
 	var err error
 	if opts.Format == "html" {
-		downloadInfo, err = req.GetDownloadUrl(node.ID, baseName, "html")
+		downloadInfo, err = req.GetDownloadUrl(node.ID, filepath.Base(target), "html")
 	} else {
-		downloadInfo, err = req.GetDownloadUrl(node.ID, baseName, "docx")
+		downloadInfo, err = req.GetDownloadUrl(node.ID, filepath.Base(target), "docx")
 	}
 	if err != nil {
-		downloadInfo, err = req.GetDownloadUrlByDetail(node.ID, baseName)
+		downloadInfo, err = req.GetDownloadUrlByDetail(node.ID, filepath.Base(target))
 		if err != nil {
 			return err
 		}
@@ -274,34 +294,6 @@ func sanitizeName(name string) string {
 		return "untitled"
 	}
 	return name
-}
-
-func resolveUniqueName(parentDir, baseName string, used map[string]int, isDir bool) string {
-	name := baseName
-	if name == "" {
-		name = "untitled"
-	}
-	counter := used[name]
-	for {
-		actual := name
-		if counter > 0 {
-			actual = fmt.Sprintf("%s_%d", name, counter+1)
-		}
-		target := filepath.Join(parentDir, actual)
-		if isDir {
-			if _, err := os.Stat(target); os.IsNotExist(err) {
-				used[name] = counter + 1
-				return actual
-			}
-		} else {
-			doc := target + ".docx"
-			if _, err := os.Stat(doc); os.IsNotExist(err) {
-				used[name] = counter + 1
-				return actual
-			}
-		}
-		counter++
-	}
 }
 
 func renderTreeToFile(path string, tree nodeTree) error {
@@ -346,9 +338,8 @@ type MockNode struct {
 }
 
 func createMockTree(parentDir string, nodes []MockNode, logger *log.Logger) error {
-	used := map[string]int{}
 	for _, n := range nodes {
-		name := resolveUniqueName(parentDir, sanitizeName(n.Title), used, len(n.Children) > 0 || n.HasChild)
+		name := sanitizeName(n.Title)
 		if len(n.Children) > 0 || n.HasChild {
 			dir := filepath.Join(parentDir, name)
 			if err := os.MkdirAll(dir, 0755); err != nil {

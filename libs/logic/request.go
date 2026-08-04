@@ -38,7 +38,7 @@ type Node struct {
 }
 
 type Workspaces struct {
-	ID           string    `json:"_id"`
+	ID           string `json:"_id"`
 	Created      time.Time
 	Name         string
 	Organization struct {

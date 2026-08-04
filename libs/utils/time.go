@@ -27,4 +27,3 @@ func ParseTimeFromString(t string) (time.Time, error) {
 	var cstZone = time.FixedZone("CST", 8*3600)
 	return time.ParseInLocation("2006-01-02 15:04:05", t, cstZone)
 }
-

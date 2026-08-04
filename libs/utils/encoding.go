@@ -11,4 +11,3 @@ func EncodingTo(s string, from string, to string) string {
 func GBKToUTF(s string) string {
 	return EncodingTo(s, "GBK", "UTF8")
 }
-

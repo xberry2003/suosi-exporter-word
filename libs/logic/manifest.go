@@ -20,18 +20,18 @@ type ManifestEntry struct {
 }
 
 type ManifestStore struct {
-	mu       sync.Mutex
-	path     string
-	entries  map[string]ManifestEntry
-	failed   map[string]ManifestEntry
+	mu      sync.Mutex
+	path    string
+	entries map[string]ManifestEntry
+	failed  map[string]ManifestEntry
 }
 
 func NewManifestStore(path string) *ManifestStore {
 	return &ManifestStore{path: path, entries: map[string]ManifestEntry{}, failed: map[string]ManifestEntry{}}
 }
 
-func manifestKey(nodeID, localPath string) string {
-	return nodeID + "::" + localPath
+func manifestKey(nodeID string) string {
+	return nodeID
 }
 
 func (m *ManifestStore) Load() error {
@@ -46,7 +46,7 @@ func (m *ManifestStore) Load() error {
 		return err
 	}
 	for _, item := range list {
-		key := manifestKey(item.NodeID, item.LocalPath)
+		key := manifestKey(item.NodeID)
 		m.entries[key] = item
 		if item.Status == "failed" {
 			m.failed[key] = item
@@ -58,7 +58,7 @@ func (m *ManifestStore) Load() error {
 func (m *ManifestStore) Upsert(entry ManifestEntry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := manifestKey(entry.NodeID, entry.LocalPath)
+	key := manifestKey(entry.NodeID)
 	m.entries[key] = entry
 	if entry.Status == "failed" {
 		m.failed[key] = entry
@@ -67,24 +67,18 @@ func (m *ManifestStore) Upsert(entry ManifestEntry) {
 	}
 }
 
-func (m *ManifestStore) ShouldSkip(entry ManifestEntry, overwrite bool, retryFailed bool) bool {
+func (m *ManifestStore) Get(nodeID string) (ManifestEntry, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := manifestKey(entry.NodeID, entry.LocalPath)
-	old, ok := m.entries[key]
-	if !ok {
-		return false
-	}
-	if overwrite {
-		return false
-	}
-	if old.Status == "success" {
-		return true
-	}
-	if old.Status == "failed" && !retryFailed {
-		return false
-	}
-	return false
+	entry, ok := m.entries[manifestKey(nodeID)]
+	return entry, ok
+}
+
+func (m *ManifestStore) IsSuccess(nodeID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.entries[manifestKey(nodeID)]
+	return ok && entry.Status == "success"
 }
 
 func (m *ManifestStore) Save() error {
@@ -116,4 +110,3 @@ func (m *ManifestStore) Save() error {
 	failedPath := filepath.Join(filepath.Dir(m.path), "failed_docs.json")
 	return os.WriteFile(failedPath, failedData, 0644)
 }
-

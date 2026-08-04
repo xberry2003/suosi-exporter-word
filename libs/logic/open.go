@@ -15,4 +15,3 @@ func OpenURL(target string) error {
 		return exec.Command("xdg-open", target).Start()
 	}
 }
-

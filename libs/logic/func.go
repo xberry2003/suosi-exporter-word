@@ -77,7 +77,7 @@ func ReadOutput(rc io.ReadCloser, forward io.Writer, done func()) (wsURL string,
 }
 
 func ExitFunc(process *os.Process) {
-	c := make(chan os.Signal)
+	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	go func() {
 		for s := range c {
