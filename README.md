@@ -64,27 +64,26 @@ go run ./cmd/tb-inventory inventory `
 
 也可以使用 `--project-id`、`--projects-file` 或 `--discover-projects`。详细说明见 [docs/TEAMBITION_INVENTORY.md](docs/TEAMBITION_INVENTORY.md)。
 
-## Teambition 旧爬虫浏览器路径
+## Teambition 浏览器批量清单
 
-适用于没有 OpenAPI 应用授权，但当前账号可以在网页端访问项目文件库的场景。程序会打开一个临时 Chrome 或 Edge 窗口，登录成功后读取会话 Cookie，并使用 Teambition Web 接口抓取元数据。
-
-诊断：
+适用于没有 OpenAPI 应用授权，但当前账号可以在网页端访问项目文件库的场景。该命令只有一个批量入口，不扫描企业首页；它直接读取已经准备好的 `tb_discovered_projects.json`，在一个持续打开的 Chrome 或 Edge 会话中依次访问所有 `/works/...` URL。
 
 ```powershell
-go run ./cmd/tb-web-inventory doctor `
-  --project-url "https://www.teambition.com/project/<projectId>/works/<folderId>"
+go run ./cmd/tb-web-inventory `
+  --projects-json "D:\桌面\suosi-export\tb_discovered_projects.json"
 ```
 
-抓取清单：
+浏览器登录一次后会在整个批次中保持打开。登录资料保存在输出目录的 `browser-profile`，中断后再次运行通常不需要重新登录。已完成项目会通过 SQLite 检查点自动跳过，首轮失败项目会在最后统一重试一次。
 
-```powershell
-go run ./cmd/tb-web-inventory inventory `
-  --project-url "https://www.teambition.com/project/<projectId>/works/<folderId>" `
-  --output ./output/teambition-web `
-  --force-refresh
-```
+每个项目完成后，完整清单会写入原 `tb_discovered_projects.json` 的 `crawl` 字段，并在该文件旁同步生成独立的 `tb_summary.json`；原始 `projects` URL 数组不会被覆盖。某些子文件夹返回 `403` 时会记录到 `tb_errors.csv` 并继续抓取其他可访问目录。详细说明见 [docs/TEAMBITION_WEB_INVENTORY.md](docs/TEAMBITION_WEB_INVENTORY.md)。
 
-如果某些子文件夹返回 `403`，浏览器路径会记录到 `tb_errors.csv` 并继续抓取其他可访问目录。详细说明见 [docs/TEAMBITION_WEB_INVENTORY.md](docs/TEAMBITION_WEB_INVENTORY.md)。
+## Codex 内置浏览器 Skill：发现项目文件库 URL
+
+如果只需要从 Teambition“我参与的项目”入口收集项目文件库 URL，而不抓取文件内容，可以使用 [find-tbProj-skill](find-tbProj-skill/)。
+
+这个 Skill 使用 Codex Desktop 的内置浏览器和已有登录态，识别项目页面中的“文件”或“项目文件”入口，输出 `/project/{projectId}/works/{rootParentId}` URL，并支持增量写入、断点续跑、按项目 ID 去重和失败重试。它不使用官方 SDK，也不会读取或提交 Cookie、密码等登录信息。
+
+详细流程和 JSON 格式见 [find-tbProj-skill/SKILL.md](find-tbProj-skill/SKILL.md)。
 
 ## 输出文件
 
