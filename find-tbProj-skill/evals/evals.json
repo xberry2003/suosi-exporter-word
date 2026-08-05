@@ -1,0 +1,24 @@
+{
+  "skill_name": "find-tb-project-urls",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "从我当前登录的 Teambition 我参与的项目入口读取前 10 个项目的文件库 URL，写入临时 JSON，不要碰正式 tb_discovered_projects.json。",
+      "expected_output": "最多 10 个新项目，成功写入可重读 JSON，URL 均为 /project/{id}/works/{root}。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "继续上次中断的 TB 项目 URL 扫描，使用已有 JSON 去重，只处理尚未成功的项目，并在每次项目结束后保存。",
+      "expected_output": "已有成功 projectId 被跳过，新增或失败项目增量写入同一 JSON。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "读取我参与的 Teambition 项目中的文件或项目文件入口；遇到没有文件库的项目记录 no_file_library，遇到登录失效暂停让我处理，不要改走 SDK。",
+      "expected_output": "两种文件标签都能识别；无文件库项目和认证暂停分别处理。",
+      "files": []
+    }
+  ]
+}
+
