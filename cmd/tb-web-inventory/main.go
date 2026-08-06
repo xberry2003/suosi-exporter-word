@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,227 +16,281 @@ import (
 	"time"
 )
 
+type projectRecord struct {
+	ProjectID   string `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	ProjectURL  string `json:"projectUrl"`
+	RootParent  string `json:"rootParentId"`
+}
+
+type projectList struct {
+	Projects []projectRecord `json:"projects"`
+}
+
 func main() {
-	os.Exit(run())
+	os.Exit(run(os.Args[1:]))
 }
 
-func run() int {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: tb-web-inventory <doctor|inventory|summary|export>")
-		return 1
-	}
-	switch os.Args[1] {
-	case "doctor":
-		return doctor(os.Args[2:])
-	case "inventory":
-		return inventory(os.Args[2:])
-	case "summary":
-		return summary(os.Args[2:])
-	case "export":
-		return exportCmd(os.Args[2:])
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
-		return 1
-	}
-}
-
-func doctor(args []string) int {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	projectURL := fs.String("project-url", "", "full Teambition project files URL")
-	parentID := fs.String("parent-id", "", "override starting collection ID")
-	pageSize := fs.Int("page-size", 50, "page size")
-	loginTimeout := fs.Duration("login-timeout", 10*time.Minute, "time allowed for browser login")
-	rawResponse := fs.Bool("raw-response", false, "print raw metadata responses")
-	if fs.Parse(args) != nil {
-		return 1
-	}
-	ref, ok := parseURL(*projectURL, *parentID)
-	if !ok {
-		return 1
-	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	fmt.Println("Opening a temporary browser. Complete Teambition login there; this can take up to", *loginTimeout)
-	session, err := tbweb.AcquireSession(ctx, *projectURL, *loginTimeout)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "doctor failed:", err)
-		return 1
-	}
-	client := tbweb.NewClient(session.CookieHeader, session.Referer)
-	page, status, err := client.ListFiles(ctx, ref.ProjectID, ref.ParentID, "", tbinventory.ListOptions{PageSize: *pageSize})
-	printDiagnostics(ref, page, status, *rawResponse)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "doctor failed:", err)
-		return 1
-	}
-	fmt.Printf("doctor ok: project=%s parent=%s folders=%d files=%d (metadata only)\n", ref.ProjectID, valueOrRoot(ref.ParentID), len(page.Collections), len(page.Works))
-	return 0
-}
-
-func inventory(args []string) int {
-	fs := flag.NewFlagSet("inventory", flag.ContinueOnError)
-	projectURL := fs.String("project-url", "", "full Teambition project files URL")
-	parentID := fs.String("parent-id", "", "override starting collection ID")
-	output := fs.String("output", "./output/teambition-web", "output directory")
-	dbPath := fs.String("db", "", "SQLite path")
+func run(args []string) int {
+	fs := flag.NewFlagSet("tb-web-inventory", flag.ContinueOnError)
+	projectsJSON := fs.String("projects-json", "./tb_discovered_projects.json", "JSON file containing discovered project file-library URLs; crawl results are embedded back into this file")
+	output := fs.String("output", "", "supporting SQLite/CSV/JSONL output directory (default: <projects-json-dir>/teambition-inventory)")
+	dbPath := fs.String("db", "", "SQLite checkpoint path")
+	profileDir := fs.String("profile-dir", "", "persistent browser profile directory")
 	pageSize := fs.Int("page-size", 100, "page size")
 	includeArchived := fs.Bool("include-archived", false, "include archived files")
-	loginTimeout := fs.Duration("login-timeout", 10*time.Minute, "time allowed for browser login")
-	forceRefresh := fs.Bool("force-refresh", false, "refresh even when previous data exists")
-	if fs.Parse(args) != nil {
-		return 1
-	}
-	ref, ok := parseURL(*projectURL, *parentID)
-	if !ok {
+	loginTimeout := fs.Duration("login-timeout", 10*time.Minute, "time allowed for the single browser login")
+	forceRefresh := fs.Bool("force-refresh", false, "recrawl projects already marked success or partial")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 1
 	}
 	if *pageSize < 1 {
 		fmt.Fprintln(os.Stderr, "--page-size must be at least 1")
 		return 1
 	}
+
+	inputPath, err := filepath.Abs(*projectsJSON)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "invalid --projects-json:", err)
+		return 1
+	}
+	projects, err := loadProjects(inputPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "load project URL list failed:", err)
+		return 1
+	}
+	if len(projects) == 0 {
+		fmt.Fprintln(os.Stderr, "load project URL list failed: no valid project file-library URLs")
+		return 1
+	}
+	if *output == "" {
+		*output = filepath.Join(filepath.Dir(inputPath), "teambition-inventory")
+	}
 	if *dbPath == "" {
 		*dbPath = filepath.Join(*output, "tb_inventory.sqlite")
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	fmt.Println("Opening a temporary browser. Complete Teambition login there; this can take up to", *loginTimeout)
-	session, err := tbweb.AcquireSession(ctx, *projectURL, *loginTimeout)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "inventory failed:", err)
-		return 1
+	if *profileDir == "" {
+		*profileDir = filepath.Join(*output, "browser-profile")
 	}
+
 	db, err := tbinventory.OpenDB(*dbPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "inventory failed:", err)
+		fmt.Fprintln(os.Stderr, "open checkpoint database failed:", err)
 		return 1
 	}
 	defer db.Close()
+	completed, err := completedProjectIDs(db)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "read checkpoint failed:", err)
+		return 1
+	}
+	pending := make([]tbinventory.Project, 0, len(projects))
+	for _, project := range projects {
+		if !*forceRefresh && completed[project.ID] {
+			continue
+		}
+		pending = append(pending, project)
+	}
+	if len(pending) == 0 {
+		if err := exportCheckpoint(db, *output, inputPath); err != nil {
+			fmt.Fprintln(os.Stderr, "export checkpoint failed:", err)
+			return 1
+		}
+		fmt.Printf("all %d projects are already complete; results=%s\n", len(projects), inputPath)
+		return 0
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	fmt.Printf("opening one persistent browser for %d pending projects; log in once if prompted\n", len(pending))
+	browser, _, err := tbweb.OpenBrowserSession(ctx, pending[0].URL, *profileDir, *loginTimeout)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "open browser session failed:", err)
+		return 1
+	}
+	defer browser.Close()
 
 	runID := time.Now().UTC().Format("20060102T150405.000000000Z")
-	project := tbinventory.Project{ID: ref.ProjectID, URL: *projectURL, RootParentID: ref.ParentID}
 	configJSON, _ := json.Marshal(map[string]any{
-		"mode": "browser-session", "project": project, "includeArchived": *includeArchived,
-		"pageSize": *pageSize, "forceRefresh": *forceRefresh,
+		"mode": "browser-url-list", "projectsJson": inputPath, "includeArchived": *includeArchived,
+		"pageSize": *pageSize, "forceRefresh": *forceRefresh, "persistentProfile": *profileDir,
 	})
 	_, _ = db.SQL.Exec(`INSERT INTO tb_crawl_runs(run_id,started_at,status,org_id,include_archived,config_json) VALUES(?,?,?,?,?,?)`,
 		runID, time.Now().UTC().Format(time.RFC3339), "running", "browser-session", *includeArchived, string(configJSON))
 
-	crawler := &tbinventory.Crawler{
-		Files: tbweb.NewClient(session.CookieHeader, session.Referer), DB: db, RunID: runID,
-		Options: tbinventory.CrawlOptions{IncludeArchived: *includeArchived, SkipForbiddenFolders: true, PageSize: *pageSize, Retries: 4, ForceRefresh: *forceRefresh},
+	partialCount := 0
+	failed := make([]tbinventory.Project, 0)
+	for index, project := range pending {
+		status, crawlErr := crawlOne(ctx, browser, db, runID, project, *pageSize, *includeArchived, *forceRefresh, index+1, len(pending), false)
+		if status == "partial" {
+			partialCount++
+		}
+		if crawlErr != nil {
+			failed = append(failed, project)
+		}
+		if err := exportCheckpoint(db, *output, inputPath); err != nil {
+			fmt.Fprintln(os.Stderr, "export checkpoint failed:", err)
+			return 1
+		}
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "crawl interrupted; completed checkpoints were retained:", ctx.Err())
+			return 1
+		}
 	}
-	crawlErr := crawler.CrawlProject(ctx, project)
-	var partialErr *tbinventory.PartialCrawlError
-	isPartial := errors.As(crawlErr, &partialErr)
-	exportErr := tbinventory.ExportAll(db, *output)
-	summaryValue, summaryErr := tbinventory.BuildSummary(db)
+
+	remaining := make([]tbinventory.Project, 0)
+	if len(failed) > 0 {
+		fmt.Printf("first pass complete; retrying %d failed projects once\n", len(failed))
+		for index, project := range failed {
+			_, crawlErr := crawlOne(ctx, browser, db, runID, project, *pageSize, *includeArchived, true, index+1, len(failed), true)
+			if crawlErr != nil {
+				remaining = append(remaining, project)
+			}
+			if err := exportCheckpoint(db, *output, inputPath); err != nil {
+				fmt.Fprintln(os.Stderr, "export retry checkpoint failed:", err)
+				return 1
+			}
+		}
+	}
+
+	summary, err := tbinventory.BuildSummary(db)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "build final summary failed:", err)
+		return 1
+	}
 	status := "success"
-	errorCount := 0
-	if isPartial {
+	if summary.SkippedFolderCount > 0 || len(remaining) > 0 {
 		status = "partial"
-		errorCount = partialErr.SkippedFolders
-	} else if crawlErr != nil || exportErr != nil || summaryErr != nil {
-		status = "failed"
-		errorCount = 1
 	}
 	_, _ = db.SQL.Exec(`UPDATE tb_crawl_runs SET finished_at=?,status=?,project_count=?,folder_count=?,file_count=?,total_size_bytes=?,error_count=? WHERE run_id=?`,
-		time.Now().UTC().Format(time.RFC3339), status, summaryValue.ProjectCount, summaryValue.FolderCount, summaryValue.FileCount, summaryValue.TotalSizeBytes, errorCount, runID)
-	if crawlErr != nil && !isPartial {
-		fmt.Fprintln(os.Stderr, "inventory failed:", crawlErr)
+		time.Now().UTC().Format(time.RFC3339), status, summary.ProjectCount, summary.FolderCount, summary.FileCount, summary.TotalSizeBytes, summary.SkippedFolderCount+len(remaining), runID)
+	if err := exportCheckpoint(db, *output, inputPath); err != nil {
+		fmt.Fprintln(os.Stderr, "final export failed:", err)
 		return 1
 	}
-	if exportErr != nil {
-		fmt.Fprintln(os.Stderr, "export failed:", exportErr)
-		return 1
-	}
-	if summaryErr != nil {
-		fmt.Fprintln(os.Stderr, "summary failed:", summaryErr)
-		return 1
-	}
-	if isPartial {
-		fmt.Printf("inventory partial: skipped_forbidden_folders=%d; details=%s\n", partialErr.SkippedFolders, filepath.Join(*output, "tb_errors.csv"))
-	}
-	fmt.Printf("projects=%d folders=%d files=%d bytes=%d status=%s output=%s\n", summaryValue.ProjectCount, summaryValue.FolderCount, summaryValue.FileCount, summaryValue.TotalSizeBytes, status, *output)
-	return 0
-}
-
-func summary(args []string) int {
-	fs := flag.NewFlagSet("summary", flag.ContinueOnError)
-	dbPath := fs.String("db", "./output/teambition-web/tb_inventory.sqlite", "SQLite path")
-	if fs.Parse(args) != nil {
-		return 1
-	}
-	db, err := tbinventory.OpenDB(*dbPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	defer db.Close()
-	value, err := tbinventory.BuildSummary(db)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	data, _ := json.MarshalIndent(value, "", "  ")
-	fmt.Println(string(data))
-	return 0
-}
-
-func exportCmd(args []string) int {
-	fs := flag.NewFlagSet("export", flag.ContinueOnError)
-	dbPath := fs.String("db", "./output/teambition-web/tb_inventory.sqlite", "SQLite path")
-	output := fs.String("output", "./output/teambition-web", "output directory")
-	if fs.Parse(args) != nil {
-		return 1
-	}
-	db, err := tbinventory.OpenDB(*dbPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	defer db.Close()
-	if err := tbinventory.ExportAll(db, *output); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	fmt.Printf("batch complete: listed=%d attempted=%d partial=%d failed=%d folders=%d files=%d skipped_folders=%d skipped_files_known=%t results=%s\n",
+		len(projects), len(pending), partialCount, len(remaining), summary.FolderCount, summary.FileCount, summary.SkippedFolderCount, summary.SkippedFilesKnown, inputPath)
+	if len(remaining) > 0 {
+		return 2
 	}
 	return 0
 }
 
-func parseURL(raw, parentOverride string) (tbinventory.ProjectFilesRef, bool) {
-	if raw == "" {
-		fmt.Fprintln(os.Stderr, "--project-url is required")
-		return tbinventory.ProjectFilesRef{}, false
-	}
-	ref, err := tbinventory.ParseProjectFilesURL(raw)
+func loadProjects(path string) ([]tbinventory.Project, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "invalid --project-url:", err)
-		return tbinventory.ProjectFilesRef{}, false
+		return nil, err
 	}
-	if parentOverride != "" {
-		ref.ParentID = parentOverride
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+	var list projectList
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
 	}
-	return ref, true
+	projects := make([]tbinventory.Project, 0, len(list.Projects))
+	seen := make(map[string]bool)
+	for index, record := range list.Projects {
+		ref, err := tbinventory.ParseProjectFilesURL(record.ProjectURL)
+		if err != nil {
+			return nil, fmt.Errorf("projects[%d] %q: %w", index, record.ProjectName, err)
+		}
+		if record.ProjectID != "" && record.ProjectID != ref.ProjectID {
+			return nil, fmt.Errorf("projects[%d]: projectId %q does not match URL project %q", index, record.ProjectID, ref.ProjectID)
+		}
+		if record.RootParent != "" && record.RootParent != ref.ParentID {
+			return nil, fmt.Errorf("projects[%d]: rootParentId %q does not match URL root %q", index, record.RootParent, ref.ParentID)
+		}
+		if seen[ref.ProjectID] {
+			continue
+		}
+		seen[ref.ProjectID] = true
+		projects = append(projects, tbinventory.Project{ID: ref.ProjectID, Name: record.ProjectName, URL: record.ProjectURL, RootParentID: ref.ParentID})
+	}
+	return projects, nil
 }
 
-func printDiagnostics(ref tbinventory.ProjectFilesRef, page tbinventory.Page, status int, raw bool) {
-	code := "<absent>"
-	if page.Diagnostics.BusinessCode != nil {
-		code = fmt.Sprintf("%.0f", *page.Diagnostics.BusinessCode)
+func completedProjectIDs(db *tbinventory.DB) (map[string]bool, error) {
+	completed := make(map[string]bool)
+	rows, err := db.SQL.Query(`SELECT project_id FROM tb_projects WHERE crawl_status IN ('success','partial')`)
+	if err != nil {
+		return nil, err
 	}
-	fmt.Printf("doctor response: http_status=%d business_code=%s request_id=%q project=%s parent=%s next_page=%q folders=%d files=%d\n",
-		status, code, page.Diagnostics.RequestID, ref.ProjectID, valueOrRoot(ref.ParentID), page.NextPageToken, len(page.Collections), len(page.Works))
-	if page.Diagnostics.ErrorMessage != "" {
-		fmt.Println("doctor error_message:", page.Diagnostics.ErrorMessage)
+	defer rows.Close()
+	for rows.Next() {
+		var projectID string
+		if err := rows.Scan(&projectID); err != nil {
+			return nil, err
+		}
+		completed[projectID] = true
 	}
-	if raw {
-		fmt.Println("doctor raw_response:")
-		fmt.Println(page.Diagnostics.RawResponse)
-	}
+	return completed, rows.Err()
 }
 
-func valueOrRoot(value string) string {
-	if value == "" {
-		return "<project-root>"
+func crawlOne(ctx context.Context, browser *tbweb.BrowserSession, db *tbinventory.DB, runID string, project tbinventory.Project, pageSize int, includeArchived, forceRefresh bool, index, total int, retry bool) (string, error) {
+	label := "crawl"
+	if retry {
+		label = "retry"
 	}
-	return value
+	fmt.Printf("%s project %d/%d id=%s name=%s url=%s\n", label, index, total, project.ID, project.Name, project.URL)
+	session, err := browser.Navigate(ctx, project.URL)
+	if err != nil {
+		_ = db.UpsertProject(project, "failed", err.Error())
+		_ = db.AddError(runID, project.ID, project.RootParentID, "navigation", project.ID, "Navigate", 0, err.Error(), 0)
+		fmt.Fprintf(os.Stderr, "%s failed id=%s: %v\n", label, project.ID, err)
+		return "failed", err
+	}
+	_, _ = db.SQL.Exec(`DELETE FROM tb_crawl_errors WHERE run_id=? AND project_id=?`, runID, project.ID)
+	crawler := &tbinventory.Crawler{
+		Files: tbweb.NewClient(session.CookieHeader, session.Referer), DB: db, RunID: runID,
+		Options: tbinventory.CrawlOptions{IncludeArchived: includeArchived, SkipForbiddenFolders: true, PageSize: pageSize, Retries: 4, ForceRefresh: forceRefresh},
+	}
+	err = crawler.CrawlProject(ctx, project)
+	var partialErr *tbinventory.PartialCrawlError
+	if errors.As(err, &partialErr) {
+		fmt.Printf("%s partial id=%s skipped_forbidden_folders=%d\n", label, project.ID, partialErr.SkippedFolders)
+		return "partial", nil
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s failed id=%s: %v\n", label, project.ID, err)
+		return "failed", err
+	}
+	fmt.Printf("%s success id=%s\n", label, project.ID)
+	return "success", nil
+}
+
+func exportCheckpoint(db *tbinventory.DB, output, projectsJSON string) error {
+	if err := tbinventory.ExportAll(db, output); err != nil {
+		return err
+	}
+	summary, err := os.ReadFile(filepath.Join(output, "tb_summary.json"))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(projectsJSON), "tb_summary.json"), summary, 0644); err != nil {
+		return err
+	}
+	inventory, err := os.ReadFile(filepath.Join(output, "tb_inventory.json"))
+	if err != nil {
+		return err
+	}
+	original, err := os.ReadFile(projectsJSON)
+	if err != nil {
+		return err
+	}
+	original = bytes.TrimPrefix(original, []byte{0xEF, 0xBB, 0xBF})
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(original, &root); err != nil {
+		return err
+	}
+	if !json.Valid(inventory) {
+		return errors.New("generated tb_inventory.json is invalid")
+	}
+	root["crawl"] = json.RawMessage(inventory)
+	merged, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(projectsJSON, append(merged, '\n'), 0644)
 }

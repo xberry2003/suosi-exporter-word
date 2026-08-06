@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
 type ImportResource struct {
@@ -45,7 +46,76 @@ func ExportAll(db *DB, out string) error {
 	if e = WriteSummaryJSON(filepath.Join(out, "tb_summary.json"), s); e != nil {
 		return e
 	}
+	if e = exportCombinedJSON(db, out, s); e != nil {
+		return e
+	}
 	return writeFile(filepath.Join(out, "tb_summary.md"), []byte(SummaryMarkdown(s)))
+}
+
+func exportCombinedJSON(db *DB, out string, summary Summary) error {
+	readJSONL := func(name string) ([]json.RawMessage, error) {
+		file, err := os.Open(filepath.Join(out, name))
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		values := []json.RawMessage{}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := append([]byte(nil), scanner.Bytes()...)
+			if len(line) > 0 {
+				values = append(values, json.RawMessage(line))
+			}
+		}
+		return values, scanner.Err()
+	}
+	projects, err := readJSONL("tb_projects.jsonl")
+	if err != nil {
+		return err
+	}
+	folders, err := readJSONL("tb_folders.jsonl")
+	if err != nil {
+		return err
+	}
+	files, err := readJSONL("tb_works.jsonl")
+	if err != nil {
+		return err
+	}
+	errorsList := []map[string]any{}
+	rows, err := db.SQL.Query(`SELECT run_id,project_id,parent_id,resource_type,resource_id,operation,http_status,error_message,retry_count,created_at FROM tb_crawl_errors ORDER BY created_at`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var runID, projectID, parentID, resourceType, resourceID, operation, message, createdAt string
+		var status, retries int
+		if err := rows.Scan(&runID, &projectID, &parentID, &resourceType, &resourceID, &operation, &status, &message, &retries, &createdAt); err != nil {
+			return err
+		}
+		errorsList = append(errorsList, map[string]any{
+			"runId": runID, "projectId": projectID, "parentId": parentID, "resourceType": resourceType,
+			"resourceId": resourceID, "operation": operation, "httpStatus": status,
+			"errorMessage": message, "retryCount": retries, "createdAt": createdAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	artifact := map[string]any{
+		"formatVersion": 1,
+		"generatedAt":   time.Now().UTC().Format(time.RFC3339),
+		"summary":       summary,
+		"projects":      projects,
+		"folders":       folders,
+		"files":         files,
+		"errors":        errorsList,
+	}
+	data, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFile(filepath.Join(out, "tb_inventory.json"), append(data, '\n'))
 }
 func exportJSONL(db *DB, out string) error {
 	rows, e := db.SQL.Query(`SELECT project_id,work_id,parent_id,prefix_path,file_name,mime_type,file_size_bytes,is_archived,created_at,updated_at,resource_id,source_page_url FROM tb_works ORDER BY project_id,work_id`)

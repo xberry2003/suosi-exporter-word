@@ -1,58 +1,46 @@
-# Teambition browser-session inventory
+# Teambition browser-session batch inventory
 
-`tb-web-inventory` inventories project file metadata using the same login pattern as the original Suosi crawler: it opens a temporary browser, waits for Teambition login, then calls the web endpoints with that browser session.
+`tb-web-inventory` has one entry point. It does not scan an organization home page and does not require App ID, App Secret, organization ID, or application installation. It reads existing project file-library URLs from one JSON file and inventories metadata only; file contents are not downloaded.
 
-It does not require a Teambition App ID, App Secret, organization ID, or application installation. The existing `tb-inventory` SDK command is unchanged.
-
-## Doctor
-
-Run this first from PowerShell:
+## Run from PowerShell
 
 ```powershell
-cd D:\桌面\suosi-exporter\modified_thoughtsexport
+cd D:\桌面\suosi-export\suosi-exporter-word
 
-$projectUrl = 'https://www.teambition.com/project/6216146e5e8bb1e649e464f4/works/6216146e5e8bb1e649e464f5'
-
-go run ./cmd/tb-web-inventory doctor `
-  --project-url $projectUrl
+go run ./cmd/tb-web-inventory `
+  --projects-json "D:\桌面\suosi-export\tb_discovered_projects.json"
 ```
 
-A temporary Chrome or Edge window opens. Log in in that window if prompted. The window closes after the session is detected. A successful result looks like:
+The input must contain a `projects` array. Every entry must provide a full URL in this form:
 
-```text
-doctor ok: project=... parent=... folders=N files=N (metadata only)
+```json
+{
+  "projectId": "6216146e5e8bb1e649e464f4",
+  "projectName": "example",
+  "projectUrl": "https://www.teambition.com/project/6216146e5e8bb1e649e464f4/works/6216146e5e8bb1e649e464f5",
+  "rootParentId": "6216146e5e8bb1e649e464f5"
+}
 ```
 
-Use `--raw-response` only for diagnostics. It prints file metadata returned by Teambition, but never prints the browser Cookie.
+The program opens one visible browser and keeps it open for the entire batch. It navigates directly from one project URL to the next and refreshes the in-memory Cookie after every navigation. The browser profile is retained at `<output>/browser-profile`, so an interrupted run can normally reuse the same login.
 
-## Inventory
+Default supporting output directory: `<projects-json-dir>/teambition-inventory`.
 
-```powershell
-go run ./cmd/tb-web-inventory inventory `
-  --project-url $projectUrl `
-  --output ./output/teambition-web `
-  --force-refresh
-```
+Important options:
 
-The URL segment after `/works/` is automatically used as the starting root folder. `--parent-id` can override it when needed.
+- `--force-refresh`: recrawl projects already marked `success` or `partial`.
+- `--include-archived`: include archived files.
+- `--page-size`: API page size, default 100.
+- `--output`: supporting output directory.
+- `--db`: alternate SQLite checkpoint path.
+- `--profile-dir`: alternate persistent browser profile.
 
-Default output directory: `./output/teambition-web`
+## Recovery and output
 
-Files produced:
+SQLite is updated while a project is crawled. After every project the program exports all artifacts, embeds `tb_inventory.json` into the original URL-list JSON under the top-level `crawl` field, and writes a standalone `tb_summary.json` beside that URL-list JSON. The original `projects` array remains intact and is reused on the next run.
 
-- `tb_inventory.sqlite`: resumable SQLite inventory database.
-- `tb_projects.jsonl`: project records.
-- `tb_folders.jsonl`: folder records.
-- `tb_works.jsonl`: file metadata records.
-- `tb_works.csv`: file metadata for spreadsheet use.
-- `import_resources.jsonl`: downstream import queue format.
-- `tb_summary.json` and `tb_summary.md`: totals and breakdowns.
-- `tb_errors.csv`: crawl errors.
+Projects already marked `success` or `partial` are skipped unless `--force-refresh` is set. Hard failures are collected during the first pass and retried once at the end. Ctrl+C retains completed projects and the last exported JSON checkpoint.
 
-This program inventories metadata and does not download file contents. Browser cookies are kept in process memory and are not written to output files or logs.
+Supporting outputs include `tb_inventory.sqlite`, `tb_projects.jsonl`, `tb_folders.jsonl`, `tb_works.jsonl`, `tb_works.csv`, `tb_errors.csv`, `tb_summary.json`, and `tb_inventory.json`.
 
-If an individual child folder returns HTTP or business code `403`, browser mode records it in `tb_errors.csv`, skips that folder, and continues crawling the remaining folders. The final command status is `partial`; inaccessible folder contents are not included, while all other reachable metadata is exported normally.
-
-## Notes
-
-The web endpoints are undocumented Teambition interfaces and may change. If Teambition changes their response format, run `doctor --raw-response` and update the client parser. The temporary browser profile is deleted after each run, so a new run may require login again.
+An inaccessible child folder returning `403` is recorded and skipped while the rest of the project continues. `summary.skippedFolderCount` reports these folders. Because the server does not reveal how many files an inaccessible folder contains, `summary.skippedFileCount` remains zero and `summary.skippedFilesKnown` is `false` whenever such a folder exists.

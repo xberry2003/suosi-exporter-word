@@ -24,6 +24,9 @@ type Summary struct {
 	ByProject          []ProjectStat   `json:"byProject"`
 	ByExtension        []ExtensionStat `json:"byExtension"`
 	LargestFiles       []FileStat      `json:"largestFiles"`
+	SkippedFolderCount int             `json:"skippedFolderCount"`
+	SkippedFileCount   int             `json:"skippedFileCount"`
+	SkippedFilesKnown  bool            `json:"skippedFilesKnown"`
 }
 type Scenarios struct {
 	Raw1xBytes                  int64 `json:"raw1xBytes"`
@@ -54,6 +57,7 @@ type FileStat struct {
 func BuildSummary(db *DB) (Summary, error) {
 	var s Summary
 	s.CurrentVersionOnly = true
+	s.SkippedFilesKnown = true
 	s.ByProject = []ProjectStat{}
 	s.ByExtension = []ExtensionStat{}
 	s.LargestFiles = []FileStat{}
@@ -63,6 +67,15 @@ func BuildSummary(db *DB) (Summary, error) {
 	}
 	if err = db.SQL.QueryRow(`SELECT COUNT(*) FROM tb_folders`).Scan(&s.FolderCount); err != nil {
 		return s, err
+	}
+	if err = db.SQL.QueryRow(`SELECT COUNT(DISTINCT project_id || ':' || parent_id) FROM tb_crawl_errors WHERE resource_type='listing' AND http_status=403`).Scan(&s.SkippedFolderCount); err != nil {
+		return s, err
+	}
+	// A forbidden folder hides its contents, so the exact number of skipped
+	// files is unknowable. Keep the numeric field for consumers and expose the
+	// uncertainty explicitly instead of reporting a misleading zero.
+	if s.SkippedFolderCount > 0 {
+		s.SkippedFilesKnown = false
 	}
 	pm := map[string]*ProjectStat{}
 	projectRows, err := db.SQL.Query(`SELECT project_id,project_name FROM tb_projects`)

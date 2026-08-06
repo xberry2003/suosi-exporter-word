@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"thoughtsexport/internal/tbinventory"
+	"thoughtsexport/internal/teambition/collector"
+	"thoughtsexport/internal/teambition/taskprobe"
 	"time"
 )
 
@@ -30,7 +32,7 @@ func main() {
 }
 func run() int {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: tb-inventory <inventory|summary|export|doctor>")
+		fmt.Fprintln(os.Stderr, "usage: tb-inventory <inventory|summary|export|doctor|tasks probe>")
 		return 1
 	}
 	switch os.Args[1] {
@@ -42,9 +44,115 @@ func run() int {
 		return exportCmd(os.Args[2:])
 	case "doctor":
 		return doctor(os.Args[2:])
+	case "tasks":
+		if len(os.Args) < 3 || (os.Args[2] != "probe" && os.Args[2] != "collect") {
+			fmt.Fprintln(os.Stderr, "usage: tb-inventory tasks <probe|collect>")
+			return 1
+		}
+		if os.Args[2] == "collect" {
+			return tasksCollect(os.Args[3:])
+		}
+		return tasksProbe(os.Args[3:])
 	default:
 		return 1
 	}
+}
+
+func tasksProbe(args []string) int {
+	fs := flag.NewFlagSet("tasks probe", flag.ContinueOnError)
+	project := fs.String("project", "", "project ID or full Teambition project URL")
+	task := fs.String("task", "", "task ID or full Teambition task URL")
+	out := fs.String("output", "./exports", "local output root")
+	resume := fs.Bool("resume", false, "reuse successful raw responses and downloaded files")
+	if fs.Parse(args) != nil {
+		return 1
+	}
+	in, err := taskprobe.ParseRef(*project, *task)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tasks probe:", err)
+		return 1
+	}
+	in.Output = *out
+	in.Resume = *resume
+	cfg := taskprobe.LoadConfig()
+	if err = cfg.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "tasks probe:", err)
+		return 1
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	report, err := taskprobe.Run(ctx, taskprobe.NewClient(cfg), in)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tasks probe failed: project=%s task=%s: %v\n", report.ProjectID, report.TaskID, err)
+		return 1
+	}
+	failed := 0
+	for _, r := range report.Results {
+		if !r.Success {
+			failed++
+		}
+	}
+	fmt.Printf("task probe complete: project=%s task=%s interfaces=%d failed=%d output=%s\n", report.ProjectID, report.TaskID, len(report.Results), failed, filepath.Join(*out, "teambition", "task-probe", report.ProjectID, report.TaskID))
+	if failed > 0 {
+		return 2
+	}
+	return 0
+}
+
+func tasksCollect(args []string) int {
+	fs := flag.NewFlagSet("tasks collect", flag.ContinueOnError)
+	project := fs.String("project-id", "", "Teambition project ID")
+	projectURL := fs.String("project-url", "", "Teambition project task-view URL")
+	out := fs.String("output", "./exports", "collector output root")
+	resume := fs.Bool("resume", false, "reuse checkpoint and existing records")
+	raw := fs.Bool("include-raw", false, "save raw MCP responses")
+	download := fs.Bool("download-assets", false, "download linked files")
+	since := fs.String("since", "", "optional RFC3339 lower bound")
+	concurrency := fs.Int("concurrency", 2, "bounded concurrency")
+	if fs.Parse(args) != nil {
+		return 1
+	}
+	id := strings.TrimSpace(*project)
+	if id == "" && *projectURL != "" {
+		parts := strings.Split(strings.Trim(*projectURL, "/"), "/")
+		for i, p := range parts {
+			if p == "project" && i+1 < len(parts) {
+				id = parts[i+1]
+				break
+			}
+		}
+	}
+	if id == "" {
+		fmt.Fprintln(os.Stderr, "tasks collect: --project-id or --project-url is required")
+		return 1
+	}
+	var sinceTime time.Time
+	if *since != "" {
+		var e error
+		sinceTime, e = time.Parse(time.RFC3339, *since)
+		if e != nil {
+			fmt.Fprintln(os.Stderr, "tasks collect: invalid --since:", e)
+			return 1
+		}
+	}
+	cfg := taskprobe.LoadConfig()
+	if e := cfg.Validate(); e != nil {
+		fmt.Fprintln(os.Stderr, "tasks collect:", e)
+		return 1
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	m, e := collector.New(taskprobe.NewClient(cfg), collector.Config{ProjectID: id, ProjectURL: *projectURL, Output: *out, Resume: *resume, IncludeRaw: *raw, DownloadAssets: *download, Since: sinceTime, Concurrency: *concurrency}).Run(ctx)
+	if e != nil {
+		fmt.Fprintln(os.Stderr, "tasks collect failed:", e)
+		return 1
+	}
+	b, _ := json.Marshal(m)
+	fmt.Println(string(b))
+	if m.Status == "partial" {
+		return 2
+	}
+	return 0
 }
 func inventory(args []string) int {
 	fs := flag.NewFlagSet("inventory", flag.ContinueOnError)

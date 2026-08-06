@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"thoughtsexport/libs/logic"
@@ -19,43 +20,90 @@ type Session struct {
 	Referer      string
 }
 
-func AcquireSession(ctx context.Context, projectURL string, timeout time.Duration) (Session, error) {
+// BrowserSession owns one visible browser for the whole batch. Its profile is
+// kept on disk so an interrupted run can normally reuse the existing login.
+type BrowserSession struct {
+	ctx             context.Context
+	cancelBrowser   context.CancelFunc
+	cancelAllocator context.CancelFunc
+}
+
+func OpenBrowserSession(ctx context.Context, startURL, profileDir string, loginTimeout time.Duration) (*BrowserSession, Session, error) {
 	execPath := logic.FindExecPath()
 	if execPath == "" {
-		return Session{}, errors.New("Chrome or Edge was not found")
+		return nil, Session{}, errors.New("Chrome or Edge was not found")
 	}
-	profileDir, err := os.MkdirTemp("", "tb-web-inventory-profile-")
+	if profileDir == "" {
+		return nil, Session{}, errors.New("browser profile directory is required")
+	}
+	absProfile, err := filepath.Abs(profileDir)
 	if err != nil {
-		return Session{}, err
+		return nil, Session{}, err
 	}
-	defer os.RemoveAll(profileDir)
+	if err := os.MkdirAll(absProfile, 0700); err != nil {
+		return nil, Session{}, fmt.Errorf("create browser profile: %w", err)
+	}
 
 	allocatorOptions := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(execPath),
-		chromedp.UserDataDir(profileDir),
+		chromedp.UserDataDir(absProfile),
 		chromedp.Flag("headless", false),
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("no-default-browser-check", true),
 	)
 	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(ctx, allocatorOptions...)
-	defer cancelAllocator()
-	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx, chromedp.WithErrorf(func(format string, args ...interface{}) {
-		message := fmt.Sprintf(format, args...)
-		if strings.Contains(message, "unknown ClientNavigationReason value") {
-			return
-		}
-		fmt.Fprintln(os.Stderr, message)
-	}))
-	defer cancelBrowser()
-	if err := chromedp.Run(browserCtx, chromedp.Navigate(projectURL)); err != nil {
-		return Session{}, fmt.Errorf("open Teambition login page: %w", err)
+	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx, chromedp.WithErrorf(browserErrorLogger))
+	browser := &BrowserSession{ctx: browserCtx, cancelBrowser: cancelBrowser, cancelAllocator: cancelAllocator}
+	if err := chromedp.Run(browserCtx, chromedp.Navigate(startURL)); err != nil {
+		browser.Close()
+		return nil, Session{}, fmt.Errorf("open Teambition page: %w", err)
 	}
+	session, err := browser.waitForLogin(loginTimeout, startURL)
+	if err != nil {
+		browser.Close()
+		return nil, Session{}, err
+	}
+	return browser, session, nil
+}
 
-	waitCtx := browserCtx
-	var cancelWait context.CancelFunc
+func (b *BrowserSession) Navigate(ctx context.Context, projectURL string) (Session, error) {
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	if err := chromedp.Run(b.ctx,
+		chromedp.Navigate(projectURL),
+		chromedp.WaitReady("body", chromedp.ByQuery),
+	); err != nil {
+		return Session{}, fmt.Errorf("navigate to %s: %w", projectURL, err)
+	}
+	cookies, err := allCookies(b.ctx)
+	if err != nil {
+		return Session{}, fmt.Errorf("refresh browser session: %w", err)
+	}
+	if !hasCookie(cookies, "TB_ACCESS_TOKEN") {
+		return Session{}, errors.New("Teambition login expired; log in again in the open browser")
+	}
+	return Session{CookieHeader: cookieHeader(cookies), Referer: projectURL}, nil
+}
+
+func (b *BrowserSession) Close() {
+	if b == nil {
+		return
+	}
+	if b.cancelBrowser != nil {
+		b.cancelBrowser()
+	}
+	if b.cancelAllocator != nil {
+		b.cancelAllocator()
+	}
+}
+
+func (b *BrowserSession) waitForLogin(timeout time.Duration, referer string) (Session, error) {
+	waitCtx := b.ctx
+	var cancel context.CancelFunc
 	if timeout > 0 {
-		waitCtx, cancelWait = context.WithTimeout(browserCtx, timeout)
-		defer cancelWait()
+		waitCtx, cancel = context.WithTimeout(b.ctx, timeout)
+		defer cancel()
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -65,7 +113,7 @@ func AcquireSession(ctx context.Context, projectURL string, timeout time.Duratio
 			return Session{}, fmt.Errorf("read browser session: %w", err)
 		}
 		if hasCookie(cookies, "TB_ACCESS_TOKEN") {
-			return Session{CookieHeader: cookieHeader(cookies), Referer: projectURL}, nil
+			return Session{CookieHeader: cookieHeader(cookies), Referer: referer}, nil
 		}
 		select {
 		case <-waitCtx.Done():
@@ -73,6 +121,14 @@ func AcquireSession(ctx context.Context, projectURL string, timeout time.Duratio
 		case <-ticker.C:
 		}
 	}
+}
+
+func browserErrorLogger(format string, args ...interface{}) {
+	message := fmt.Sprintf(format, args...)
+	if strings.Contains(message, "unknown ClientNavigationReason value") {
+		return
+	}
+	fmt.Fprintln(os.Stderr, message)
 }
 
 func allCookies(ctx context.Context) ([]*network.Cookie, error) {

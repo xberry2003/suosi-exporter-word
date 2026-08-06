@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "entity-envelope.schema.json",
+  "type": "object",
+  "required": ["schema_version", "entity_type", "source_system", "external_id", "project_external_id", "fetched_at", "visibility", "completeness", "missing_fields", "warnings", "fingerprint", "data"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "entity_type": {"type": "string"},
+    "source_system": {"const": "teambition"},
+    "external_id": {"type": "string", "minLength": 1},
+    "project_external_id": {"type": "string", "minLength": 1},
+    "source_url": {"type": ["string", "null"]},
+    "source_created_at": {"type": ["string", "null"], "format": "date-time"},
+    "source_updated_at": {"type": ["string", "null"], "format": "date-time"},
+    "fetched_at": {"type": "string", "format": "date-time"},
+    "visibility": {"enum": ["visible", "partially_visible", "inaccessible", "deleted"]},
+    "completeness": {"enum": ["complete", "partial", "failed"]},
+    "missing_fields": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "raw_ref": {"type": ["string", "null"]},
+    "data": {"type": "object"}
+  }
+}

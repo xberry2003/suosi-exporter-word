@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "type": "object",
+  "required": ["schema_version", "source_system", "collector_name", "run_id", "mode", "project_external_id", "started_at", "finished_at", "status", "counts", "coverage", "resume"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "source_system": {"const": "teambition"},
+    "collector_name": {"const": "tb-collector"},
+    "run_id": {"type": "string"},
+    "mode": {"enum": ["full", "incremental"]},
+    "project_external_id": {"type": "string"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["succeeded", "partial", "failed"]},
+    "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "coverage": {"type": "object", "additionalProperties": {"enum": ["complete", "partial", "unavailable"]}},
+    "resume": {"type": "object"}
+  }
+}

@@ -1,2 +1,5 @@
 .env
 output/teambition/
+output/teambition-inventory/
+.gocache/
+exports/
