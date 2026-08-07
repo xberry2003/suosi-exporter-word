@@ -135,6 +135,22 @@ func TestAuditNormalizationRequirements(t *testing.T) {
 	}
 }
 
+func TestPriorityNormalizationDoesNotInventDisplayNames(t *testing.T) {
+	withoutName := normalizeTask(map[string]any{"priority": float64(0)})
+	priority := withoutName["priority"].(map[string]any)
+	if priority["external_id"] != float64(0) || priority["name"] != nil || priority["display_name_status"] != "unavailable" {
+		t.Fatalf("unexpected unresolved priority: %#v", priority)
+	}
+	withName := normalizeTask(map[string]any{"priority": float64(0), "priorityName": "一般任务-老实习生"})
+	priority = withName["priority"].(map[string]any)
+	if priority["name"] != "一般任务-老实习生" || priority["display_name_status"] != "available" {
+		t.Fatalf("priority name was not preserved: %#v", priority)
+	}
+	if priorityDisplayName(map[string]any{"priorityName": nil}) != "" {
+		t.Fatal("nil priority name was treated as a display name")
+	}
+}
+
 func TestRawFilenameEscapesPathSeparators(t *testing.T) {
 	got := rawFilename("task:task-1/activity:activity-1/file:file/inner:1")
 	if strings.ContainsAny(strings.TrimSuffix(got, ".json"), `/\`) {

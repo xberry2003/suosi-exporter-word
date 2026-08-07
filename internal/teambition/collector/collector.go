@@ -107,7 +107,7 @@ func (c *Collector) Run(ctx context.Context) (Manifest, error) {
 	} else if len(c.errors) > 0 || len(validationWarnings) > 0 {
 		m.Status = "partial"
 	}
-	m.Coverage = map[string]string{"project": "complete", "task_groups": "complete", "users": "complete", "tags": "unavailable", "tasks": "complete", "task_relations": "partial", "comments": "complete", "activities": "complete", "attachments": "partial"}
+	m.Coverage = map[string]string{"project": "complete", "task_groups": "complete", "users": "complete", "tags": "unavailable", "tasks": "complete", "task_priorities": "complete", "task_relations": "partial", "comments": "complete", "activities": "complete", "attachments": "partial"}
 	for _, warning := range c.warnings {
 		if strings.HasPrefix(warning, "stage metadata unavailable") {
 			m.Coverage["task_groups"] = "partial"
@@ -833,8 +833,20 @@ func normalizeTask(v map[string]any) map[string]any {
 		format = "plain_text"
 	}
 	status := map[string]any{"external_id": v["tfsId"], "name": v["tfsName"], "category": category, "is_done": done}
-	return map[string]any{"title": first(v, "content", "title"), "task_group_external_id": v["stageId"], "task_list_external_id": first(v, "tasklistId", "taskGroupId"), "order": v["pos"], "status": status, "description": map[string]any{"format": format, "text": v["note"], "html": nil, "document": nil}, "priority": map[string]any{"external_id": v["priority"], "name": v["priorityName"], "rank": v["priority"]}, "start_at": v["startDate"], "due_at": v["dueDate"], "completed_at": v["accomplishTime"], "creator_external_user_id": v["creatorId"], "assignee_external_user_ids": manyOrOne(v["executorIds"], v["executorId"]), "participant_external_user_ids": arrayOrEmpty(v["involveMembers"]), "tag_external_ids": arrayOrEmpty(v["tagIds"]), "parent_external_task_id": v["parentTaskId"], "custom_fields": arrayOrEmpty(v["customfields"]), "archived": v["isArchived"], "deleted": false}
+	priorityName := priorityDisplayName(v)
+	priority := map[string]any{"external_id": v["priority"], "name": nil, "rank": v["priority"], "source": "QueryTaskV3", "display_name_status": "unavailable"}
+	if priorityName != "" {
+		priority["name"] = priorityName
+		priority["display_name_status"] = "available"
+	}
+	return map[string]any{"title": first(v, "content", "title"), "task_group_external_id": v["stageId"], "task_list_external_id": first(v, "tasklistId", "taskGroupId"), "order": v["pos"], "status": status, "description": map[string]any{"format": format, "text": v["note"], "html": nil, "document": nil}, "priority": priority, "start_at": v["startDate"], "due_at": v["dueDate"], "completed_at": v["accomplishTime"], "creator_external_user_id": v["creatorId"], "assignee_external_user_ids": manyOrOne(v["executorIds"], v["executorId"]), "participant_external_user_ids": arrayOrEmpty(v["involveMembers"]), "tag_external_ids": arrayOrEmpty(v["tagIds"]), "parent_external_task_id": v["parentTaskId"], "custom_fields": arrayOrEmpty(v["customfields"]), "archived": v["isArchived"], "deleted": false}
 }
+
+func priorityDisplayName(v map[string]any) string {
+	name, _ := v["priorityName"].(string)
+	return strings.TrimSpace(name)
+}
+
 func normalizeRelation(taskID string, v map[string]any) map[string]any {
 	target, _ := v["linkedId"].(string)
 	return map[string]any{"source_task_external_id": taskID, "target_task_external_id": target, "relation_type": "related", "target_source_url": nil, "target_visibility": "visible"}
