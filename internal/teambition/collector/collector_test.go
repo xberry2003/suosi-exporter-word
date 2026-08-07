@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"thoughtsexport/internal/teambition/taskprobe"
 )
 
 func TestCollectorFixturePaginationAndResume(t *testing.T) {
+	var callsMu sync.Mutex
+	calls := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
 		var req map[string]any
@@ -27,6 +30,9 @@ func TestCollectorFixturePaginationAndResume(t *testing.T) {
 			return
 		}
 		name, _ := params["name"].(string)
+		callsMu.Lock()
+		calls[name]++
+		callsMu.Unlock()
 		args, _ := params["arguments"].(map[string]any)
 		var payload any
 		switch name {
@@ -46,15 +52,9 @@ func TestCollectorFixturePaginationAndResume(t *testing.T) {
 			payload = map[string]any{"code": 200, "result": []any{map[string]any{"userId": "user-1", "name": "Alice", "profile": map[string]any{"email": "alice@example.test", "employeeNumber": "E-1"}, "isDisabled": false, "isResigned": false}}}
 		case "QueryTaskV3":
 			payload = []any{map[string]any{"id": args["taskId"], "content": "fixture", "projectId": "project-1", "tasklistId": "group-1", "isDone": false, "involveMembers": []any{}}}
-		case "ListTaskActivitiesV3":
-			if args["pageToken"] == "p2" {
-				payload = map[string]any{"items": []any{map[string]any{"id": "activity-2", "action": "comment", "creatorId": "user-1", "message": "hello"}}}
-			} else {
-				payload = map[string]any{"items": []any{map[string]any{"id": "activity-1", "action": "update", "creatorId": "user-1", "message": "changed", "fileId": "file/inner:1"}}, "nextPageToken": "p2"}
-			}
 		case "GetTaskLinksV3":
 			payload = map[string]any{"items": []any{map[string]any{"id": "link-1", "linkedType": "work", "linkedId": "work-1"}}}
-		case "GetTaskTracesV3", "QueryTaskTfs":
+		case "QueryTaskTfs":
 			payload = map[string]any{"items": []any{}}
 		case "BatchGetFileDetails":
 			body, _ := args["requestBody"].(map[string]any)
@@ -76,8 +76,28 @@ func TestCollectorFixturePaginationAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Counts["tasks"] != 2 || m.Counts["comments"] != 2 || m.Counts["activities"] != 2 {
+	if m.Counts["tasks"] != 2 {
 		t.Fatalf("unexpected counts: %#v", m.Counts)
+	}
+	if _, ok := m.Counts["comments"]; ok {
+		t.Fatalf("comments must not be emitted: %#v", m.Counts)
+	}
+	if _, ok := m.Counts["activities"]; ok {
+		t.Fatalf("activities must not be emitted: %#v", m.Counts)
+	}
+	if m.Coverage["comments"] != "unavailable" || m.Coverage["activities"] != "unavailable" {
+		t.Fatalf("excluded engagement coverage is ambiguous: %#v", m.Coverage)
+	}
+	callsMu.Lock()
+	activityCalls := calls["ListTaskActivitiesV3"] + calls["GetTaskTracesV3"]
+	callsMu.Unlock()
+	if activityCalls != 0 {
+		t.Fatalf("comments or activities were requested %d times", activityCalls)
+	}
+	for _, name := range []string{"comments.jsonl", "activities.jsonl"} {
+		if _, err := os.Stat(filepath.Join(root, "teambition-collector", "project-1", "entities", name)); !os.IsNotExist(err) {
+			t.Fatalf("excluded entity file %s should not be created", name)
+		}
 	}
 	assertRawRefsExist(t, filepath.Join(root, "teambition-collector", "project-1"))
 	users := readLines(t, filepath.Join(root, "teambition-collector", "project-1", "entities", "users.jsonl"))

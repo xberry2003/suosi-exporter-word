@@ -61,3 +61,9 @@ type ProjectSource interface {
 type FileSource interface {
 	ListFiles(ctx context.Context, projectID, parentID, pageToken string, opts ListOptions) (Page, int, error)
 }
+
+type FileDownloadDetail struct {
+	URL      string
+	Size     *int64
+	MIMEType string
+}

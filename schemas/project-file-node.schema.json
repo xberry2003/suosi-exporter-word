@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "project-file-node.schema.json",
+  "type": "object",
+  "required": ["schema_version", "entity_type", "source_system", "external_id", "project_external_id", "fetched_at", "visibility", "completeness", "missing_fields", "warnings", "fingerprint", "raw_ref", "data"],
+  "properties": {
+    "schema_version": {"const": "1.1"},
+    "entity_type": {"const": "project_file_node"},
+    "source_system": {"const": "teambition"},
+    "external_id": {"type": "string", "minLength": 1},
+    "project_external_id": {"type": "string", "minLength": 1},
+    "source_url": {"type": ["string", "null"]},
+    "source_created_at": {"type": ["string", "null"], "format": "date-time"},
+    "source_updated_at": {"type": ["string", "null"], "format": "date-time"},
+    "fetched_at": {"type": "string", "format": "date-time"},
+    "visibility": {"enum": ["visible", "partially_visible", "inaccessible", "deleted"]},
+    "completeness": {"enum": ["complete", "partial", "unavailable", "empty"]},
+    "missing_fields": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "raw_ref": {"type": ["string", "null"]},
+    "data": {
+      "type": "object",
+      "required": ["parent_external_id", "node_kind", "name", "display_path", "download_status", "archived", "deleted", "root", "synthetic"],
+      "properties": {
+        "parent_external_id": {"type": ["string", "null"]},
+        "node_kind": {"enum": ["directory", "file", "link", "online_document", "shortcut", "unknown"]},
+        "name": {"type": ["string", "null"]},
+        "display_path": {"type": "string"},
+        "order": {"type": ["integer", "null"], "minimum": 0},
+        "creator_external_user_id": {"type": ["string", "null"]},
+        "modifier_external_user_id": {"type": ["string", "null"]},
+        "size": {"type": ["integer", "null"], "minimum": 0},
+        "source_mime_type": {"type": ["string", "null"]},
+        "mime_type": {"type": ["string", "null"]},
+        "source_storage_key": {"type": ["string", "null"]},
+        "version_external_id": {"type": ["string", "null"]},
+        "content_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "local_asset_ref": {"type": ["string", "null"]},
+        "download_status": {"enum": ["not_requested", "pending", "downloaded", "verified", "permission_denied", "expired", "failed", "too_large", "not_applicable"]},
+        "archived": {"type": "boolean"},
+        "deleted": {"type": "boolean"},
+        "root": {"type": "boolean"},
+        "synthetic": {"type": "boolean"}
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "project-file-reference.schema.json",
+  "type": "object",
+  "required": ["external_id", "project_external_id", "reference_kind", "completeness", "warnings"],
+  "properties": {
+    "external_id": {"type": "string", "minLength": 1},
+    "project_external_id": {"type": "string", "minLength": 1},
+    "node_external_id": {"type": ["string", "null"]},
+    "reference_kind": {"type": "string", "minLength": 1},
+    "source_storage_key": {"type": ["string", "null"]},
+    "completeness": {"enum": ["complete", "partial", "unavailable", "empty"]},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "raw_ref": {"type": ["string", "null"]}
+  }
+}

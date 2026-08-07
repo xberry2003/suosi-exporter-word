@@ -5,8 +5,9 @@
 - `go run .`：原有所思知识库导出工具，将 `thoughts.teambition.com` Workspace 导出为 `docx` 或 `html`。
 - `go run ./cmd/tb-inventory`：Teambition 官方 OpenAPI SDK 路径，用 App ID / App Secret 抓取项目文件元数据。
 - `go run ./cmd/tb-web-inventory`：旧爬虫浏览器会话路径，打开临时浏览器登录后，使用 Web 接口抓取项目文件元数据。
+- `go run ./cmd/tb-files`：项目文件库采集器，发现来源目录树和元数据，并可选下载文件本体。
 
-两个 Teambition 清单命令都只抓取文件、文件夹、项目和容量等元数据，不下载文件正文，也不写入 TeamFlow。
+所有 Teambition 命令均只采集来源数据；它们不会调用 TeamFlow、写入 TeamFlow 数据库或生成 TeamFlow 标识。
 
 ## 所思知识库导出
 
@@ -76,6 +77,54 @@ go run ./cmd/tb-web-inventory `
 浏览器登录一次后会在整个批次中保持打开。登录资料保存在输出目录的 `browser-profile`，中断后再次运行通常不需要重新登录。已完成项目会通过 SQLite 检查点自动跳过，首轮失败项目会在最后统一重试一次。
 
 每个项目完成后，完整清单会写入原 `tb_discovered_projects.json` 的 `crawl` 字段，并在该文件旁同步生成独立的 `tb_summary.json`；原始 `projects` URL 数组不会被覆盖。某些子文件夹返回 `403` 时会记录到 `tb_errors.csv` 并继续抓取其他可访问目录。详细说明见 [docs/TEAMBITION_WEB_INVENTORY.md](docs/TEAMBITION_WEB_INVENTORY.md)。
+
+## Teambition 项目文件库采集与下载
+
+`tb-files` 是面向下游标准文件采集包的两阶段命令。`discover` 完整分页采集目录树和文件元数据；`download` 可选下载文件本体，并流式校验大小和 SHA-256。默认使用浏览器 Cookie 适配器；SDK 适配器需要已有 OpenAPI 授权。`offline` 仅用于对已有采集包补建或校验下载视图，不会访问 Teambition。
+
+首次采集目录树（浏览器会打开，登录后会继续执行）：
+
+```powershell
+go run ./cmd/tb-files discover `
+  --source browser `
+  --project-url "https://www.teambition.com/project/<projectId>/works/<rootId>" `
+  --output ./output/teambition-files `
+  --resume `
+  --include-raw
+```
+
+在确认目录语义、稳定 ID 和父子关系后，再下载二进制文件：
+
+```powershell
+go run ./cmd/tb-files download `
+  --source browser `
+  --project-url "https://www.teambition.com/project/<projectId>/works/<rootId>" `
+  --output ./output/teambition-files `
+  --resume `
+  --concurrency 4 `
+  --max-file-size 0
+```
+
+如下载已完成但缺少浏览目录，可离线补建，且不会重新请求来源：
+
+```powershell
+go run ./cmd/tb-files download `
+  --source offline `
+  --project-url "https://www.teambition.com/project/<projectId>/works/<rootId>" `
+  --output ./output/teambition-files `
+  --resume
+```
+
+输出位于 `<output>/teambition-file-collector/<projectId>/`：
+
+- `entities/project_file_nodes.jsonl`：来源节点、稳定来源 ID、父子关系、元数据和本地资产引用，是目录语义的权威记录。
+- `entities/project_file_versions.jsonl`、`entities/project_file_references.jsonl`：仅在来源接口有实际证据时写入；无法确认时在 manifest 中标记为 unavailable。
+- `assets/sha256/<prefix>/<sha256>`：按内容哈希保存的权威二进制资产。来源文件名不参与资产路径或身份判定。
+- `view/`：供人工审查的可浏览镜像，尽量保持来源目录层级和文件名；同目录同名文件会追加来源 ID 防冲突。它不作为导入身份或幂等键依据。
+- `view/view_manifest.json`：来源节点 ID 到实际浏览路径的映射。
+- `checkpoints/`、`download_errors.jsonl`、`manifest.json`：断点状态、单文件失败和本次采集包统计。
+
+临时签名下载 URL、Cookie 和 Token 不会写入普通日志、实体 JSONL、fingerprint 或 manifest。`--retry-failed-downloads` 可按来源 `external_id` 重试失败下载；`--external-id` 可只重试一个来源文件。
 
 ## Codex 内置浏览器 Skill：发现项目文件库 URL
 

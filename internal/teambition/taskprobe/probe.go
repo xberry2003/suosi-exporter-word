@@ -136,8 +136,6 @@ func Run(ctx context.Context, c *Client, in Input) (Report, error) {
 		name, cat string
 		args      map[string]any
 	}{
-		{"ListTaskActivitiesV3", "activities/comments", map[string]any{"taskId": in.TaskID, "pageSize": 100, "language": "zh_CN"}},
-		{"GetTaskTracesV3", "progress", map[string]any{"taskId": in.TaskID, "pageSize": 100}},
 		{"GetTaskLinksV3", "links", map[string]any{"taskId": in.TaskID}},
 		{"GetTaskDependenciesV3", "dependencies", map[string]any{"taskId": in.TaskID, "pageSize": 100}},
 		{"SearchTaskGroupsV3", "task groups", map[string]any{"projectId": in.ProjectID, "pageSize": 100}},

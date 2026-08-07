@@ -19,10 +19,10 @@ The package root is output/teambition-collector/projectId. Entity files are UTF-
 
 Every entity uses schema version 1.0 and a source-stable Teambition external_id. Data fields use snake_case and contain no TeamFlow IDs. Unknown scalar values are null; known empty collections are empty arrays. Fingerprints cover normalized business data only and exclude fetch time and signed URLs.
 
-Human comments detected from activity actions go to comments.jsonl. Other changes remain in activities.jsonl. System activity is never converted into a comment. Temporary signed URLs are not written to logs, manifest, fingerprints, or standard attachment entities.
+Comments and activity timelines are intentionally excluded from collection and task probing. Neither path calls `ListTaskActivitiesV3` or `GetTaskTracesV3`, and new packages do not contain `comments.jsonl` or `activities.jsonl`. Task relations and files linked directly to tasks remain in scope. Temporary signed URLs are not written to logs, manifest, fingerprints, or standard attachment entities.
 
 ## Coverage and versioning
 
-MCP supplies projects, task groups, users, tasks, task details, activities/comments, progress, task links, status/workflow data, and file metadata. Tags without a dedicated readable MCP endpoint, hidden relations, browser-only counts, absent rich-text structures, and file version history remain partial or unavailable. Source data is never fabricated.
+MCP supplies projects, task groups, users, tasks, task details, progress, task links, status/workflow data, and file metadata. Comments and activities are deliberately unavailable in the export contract. Tags without a dedicated readable MCP endpoint, hidden relations, browser-only counts, absent rich-text structures, and file version history remain partial or unavailable. Source data is never fabricated.
 
 Additive schema changes are backward compatible within version 1.x. Removing fields or changing required-field meaning requires a new major schema version.

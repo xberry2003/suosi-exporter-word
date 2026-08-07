@@ -67,6 +67,40 @@ func (s *SDKClient) ListFiles(ctx context.Context, pid, parent, token string, o 
 	}
 	return p, status, nil
 }
+
+func (s *SDKClient) ResolveFileDownload(ctx context.Context, workID string) (FileDownloadDetail, int, error) {
+	r := s.client.FileAPI.GetFileDetailV3(ctx).XTenantId(s.orgID).WorkIds(workID).NeedSign(true)
+	if s.operatorID != "" {
+		r = r.XOperatorId(s.operatorID)
+	}
+	resp, httpResp, err := r.Execute()
+	status := httpStatus(httpResp)
+	raw := responseBody(httpResp)
+	if err != nil {
+		return FileDownloadDetail{}, status, sdkError(err, httpResp, raw)
+	}
+	if resp == nil {
+		return FileDownloadDetail{}, status, &APIError{Status: status, Message: "Teambition returned an empty file-detail response"}
+	}
+	if businessErr := businessError(status, resp.Code, resp.GetErrorMessage(), resp.GetRequestId()); businessErr != nil {
+		return FileDownloadDetail{}, status, businessErr
+	}
+	for _, item := range resp.Result {
+		if item.GetId() != workID {
+			continue
+		}
+		if item.GetDownloadUrl() == "" {
+			return FileDownloadDetail{}, status, &APIError{Status: status, Message: "Teambition file detail did not return a signed download URL"}
+		}
+		var size *int64
+		if value, ok := item.GetFileSizeOk(); ok {
+			converted := int64(*value)
+			size = &converted
+		}
+		return FileDownloadDetail{URL: item.GetDownloadUrl(), Size: size, MIMEType: item.GetFileType()}, status, nil
+	}
+	return FileDownloadDetail{}, status, &APIError{Status: status, Message: "Teambition file detail did not contain the requested stable work ID"}
+}
 func (s *SDKClient) ListProjects(ctx context.Context, pageSize int, operatorID string) ([]Project, error) {
 	if pageSize < 1 {
 		pageSize = 100

@@ -107,7 +107,7 @@ func (c *Collector) Run(ctx context.Context) (Manifest, error) {
 	} else if len(c.errors) > 0 || len(validationWarnings) > 0 {
 		m.Status = "partial"
 	}
-	m.Coverage = map[string]string{"project": "complete", "task_groups": "complete", "users": "complete", "tags": "unavailable", "tasks": "complete", "task_priorities": "complete", "task_relations": "partial", "comments": "complete", "activities": "complete", "attachments": "partial"}
+	m.Coverage = map[string]string{"project": "complete", "task_groups": "complete", "users": "complete", "tags": "unavailable", "tasks": "complete", "task_priorities": "complete", "task_relations": "partial", "comments": "unavailable", "activities": "unavailable", "attachments": "partial"}
 	for _, warning := range c.warnings {
 		if strings.HasPrefix(warning, "stage metadata unavailable") {
 			m.Coverage["task_groups"] = "partial"
@@ -207,7 +207,9 @@ func (c *Collector) collectTask(ctx context.Context, summary map[string]any) err
 	for _, spec := range []struct {
 		name, entity string
 		args         map[string]any
-	}{{"ListTaskActivitiesV3", "activities", map[string]any{"taskId": id, "pageSize": 100}}, {"GetTaskLinksV3", "task_relations", map[string]any{"taskId": id}}, {"GetTaskDependenciesV3", "task_relations", map[string]any{"taskId": id, "pageSize": 100}}, {"GetTaskTracesV3", "activities", map[string]any{"taskId": id, "pageSize": 100}}} {
+		// Comments and activity timelines are intentionally outside the export
+		// contract. Task relations and linked files remain in scope.
+	}{{"GetTaskLinksV3", "task_relations", map[string]any{"taskId": id}}, {"GetTaskDependenciesV3", "task_relations", map[string]any{"taskId": id, "pageSize": 100}}} {
 		token := ""
 		for {
 			args := map[string]any{}
@@ -244,9 +246,6 @@ func (c *Collector) collectTaskSource(ctx context.Context, taskID, name, entity 
 	if name == "GetTaskLinksV3" {
 		resourceIDs = append(resourceIDs, workResourceIDs(data)...)
 	}
-	if name == "ListTaskActivitiesV3" {
-		resourceIDs = append(resourceIDs, activityResourceIDs(taskID, data)...)
-	}
 	for i, x := range arrayFrom(data) {
 		obj, ok := x.(map[string]any)
 		if !ok {
@@ -265,13 +264,6 @@ func (c *Collector) collectTaskSource(ctx context.Context, taskID, name, entity 
 		}
 		if name == "GetTaskDependenciesV3" {
 			outEntity, outData = "task_relations", normalizeDependency(taskID, obj)
-		}
-		if name == "ListTaskActivitiesV3" {
-			if action, _ := obj["action"].(string); strings.Contains(strings.ToLower(action), "comment") {
-				outEntity, outData = "comments", normalizeComment(taskID, obj)
-			} else {
-				outData = normalizeActivity(taskID, obj)
-			}
 		}
 		c.writeRaw(outEntity, eid, mustJSON(obj))
 		if e := c.writeEntity(outEntity, eid, c.envelope(outEntity, eid, obj, outData)); e == nil {
@@ -626,7 +618,7 @@ func safeFilename(name string) string {
 }
 
 func (c *Collector) ensureEntityFiles() {
-	for _, name := range []string{"projects", "task_groups", "users", "tags", "tasks", "task_relations", "comments", "activities", "attachments"} {
+	for _, name := range []string{"projects", "task_groups", "users", "tags", "tasks", "task_relations", "attachments"} {
 		p := filepath.Join(c.root, "entities", name+".jsonl")
 		if !c.cfg.Resume {
 			_ = os.WriteFile(p, nil, 0644)
@@ -647,7 +639,7 @@ func (c *Collector) writeCheckpoint() error {
 }
 func (c *Collector) actualCounts() map[string]int {
 	out := map[string]int{}
-	for _, name := range []string{"projects", "task_groups", "users", "tags", "tasks", "task_relations", "comments", "activities", "attachments"} {
+	for _, name := range []string{"projects", "task_groups", "users", "tags", "tasks", "task_relations", "attachments"} {
 		b, _ := os.ReadFile(filepath.Join(c.root, "entities", name+".jsonl"))
 		n := 0
 		for _, line := range strings.Split(string(b), "\n") {
@@ -675,7 +667,7 @@ func (c *Collector) validateEntities() ([]string, bool) {
 	warnings := []string{}
 	fatal := false
 	ids := map[string]map[string]bool{}
-	for _, name := range []string{"projects", "task_groups", "users", "tags", "tasks", "task_relations", "comments", "activities", "attachments"} {
+	for _, name := range []string{"projects", "task_groups", "users", "tags", "tasks", "task_relations", "attachments"} {
 		ids[name] = map[string]bool{}
 		path := filepath.Join(c.root, "entities", name+".jsonl")
 		b, _ := os.ReadFile(path)
@@ -712,7 +704,7 @@ func (c *Collector) validateEntities() ([]string, bool) {
 			warnings = append(warnings, "creator reference missing: "+user)
 		}
 	}
-	for _, name := range []string{"comments", "activities", "attachments"} {
+	for _, name := range []string{"attachments"} {
 		for _, v := range readEntityMaps(filepath.Join(c.root, "entities", name+".jsonl")) {
 			data, _ := v["data"].(map[string]any)
 			taskID, _ := data["task_external_id"].(string)

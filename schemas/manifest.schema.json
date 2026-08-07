@@ -2,19 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "manifest.schema.json",
   "type": "object",
-  "required": ["schema_version", "source_system", "collector_name", "run_id", "mode", "project_external_id", "started_at", "finished_at", "status", "counts", "coverage", "resume"],
+  "required": ["schema_version", "source_system", "collector_name", "collector_version", "run_id", "mode", "project_external_id", "project_url", "started_at", "finished_at", "status", "counts", "coverage", "warnings", "resume"],
   "properties": {
-    "schema_version": {"const": "1.0"},
+    "schema_version": {"const": "1.1"},
     "source_system": {"const": "teambition"},
-    "collector_name": {"const": "tb-collector"},
-    "run_id": {"type": "string"},
-    "mode": {"enum": ["full", "incremental"]},
-    "project_external_id": {"type": "string"},
+    "collector_name": {"const": "tb-file-collector"},
+    "collector_version": {"type": "string"},
+    "run_id": {"type": "string", "minLength": 1},
+    "mode": {"enum": ["discover", "download", "full"]},
+    "project_external_id": {"type": "string", "minLength": 1},
+    "project_url": {"type": "string"},
     "started_at": {"type": "string", "format": "date-time"},
     "finished_at": {"type": "string", "format": "date-time"},
     "status": {"enum": ["succeeded", "partial", "failed"]},
     "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
-    "coverage": {"type": "object", "additionalProperties": {"enum": ["complete", "partial", "unavailable"]}},
-    "resume": {"type": "object"}
+    "coverage": {"type": "object", "additionalProperties": {"enum": ["complete", "partial", "unavailable", "empty"]}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "resume": {
+      "type": "object",
+      "required": ["enabled", "discovery_checkpoint", "download_checkpoint"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "discovery_checkpoint": {"type": "string"},
+        "download_checkpoint": {"type": "string"}
+      }
+    }
   }
 }
