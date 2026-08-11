@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -66,6 +67,36 @@ type NodeDownload struct {
 	DownURL  string
 }
 
+type Template struct {
+	ID                string          `json:"_id"`
+	Title             string          `json:"title"`
+	RelatedTemplateID string          `json:"relatedTemplateId"`
+	ContentID         string          `json:"contentId"`
+	SourceContentID   string          `json:"_contentId"`
+	Type              string          `json:"type"`
+	BoundType         string          `json:"boundType"`
+	BoundID           string          `json:"_boundId"`
+	Position          float64         `json:"pos"`
+	CreatedAt         string          `json:"created"`
+	UpdatedAt         string          `json:"updated"`
+	SourceOwnerID     string          `json:"_ownerId"`
+	Deleted           bool            `json:"isDeleted"`
+	Icon              string          `json:"icon,omitempty"`
+	Summary           []string        `json:"summary,omitempty"`
+	Raw               json.RawMessage `json:"-"`
+}
+
+func (t *Template) UnmarshalJSON(data []byte) error {
+	type templateAlias Template
+	var decoded templateAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*t = Template(decoded)
+	t.Raw = append(t.Raw[:0], data...)
+	return nil
+}
+
 type IDResponse struct {
 	ID string `json:"id"`
 }
@@ -97,6 +128,69 @@ func (r *Request) GetWorkspace(hash string) (*Workspaces, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// GetTemplates returns the templates bound to one workspace. The API has
+// returned both a bare array and an object containing result in different
+// deployments, so both response shapes are accepted.
+func (r *Request) GetTemplates(workspaceID string) ([]Template, error) {
+	req := ohttp.InitSetttings()
+	req.Timeout = 10 * time.Second
+	req.IsAajx = true
+	req.Referer = "https://thoughts.teambition.com"
+	req.Cookies = r.cookie
+	content, _, err := req.Get(fmt.Sprintf("https://thoughts.teambition.com/api/workspaces/%s/templates?_=%d", workspaceID, utils.UnixTimstampMillisecond()))
+	if err != nil {
+		return nil, err
+	}
+	return decodeTemplates([]byte(content))
+}
+
+func (r *Request) GetTemplatePreview(templateID string) (json.RawMessage, error) {
+	req := ohttp.InitSetttings()
+	req.Timeout = 30 * time.Second
+	req.IsAajx = true
+	req.Referer = "https://thoughts.teambition.com"
+	req.Cookies = r.cookie
+	content, _, err := req.Get(fmt.Sprintf("https://thoughts.teambition.com/api/templates/%s:preview?_=%d", url.PathEscape(templateID), utils.UnixTimstampMillisecond()))
+	if err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(content), &envelope); err != nil {
+		return nil, err
+	}
+	if len(envelope.Result) == 0 || string(envelope.Result) == "null" {
+		return nil, errors.New("template preview response has no result")
+	}
+	return envelope.Result, nil
+}
+
+func decodeTemplates(data []byte) ([]Template, error) {
+	var raw json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	var templates []Template
+	if len(raw) > 0 && raw[0] == '[' {
+		if err := json.Unmarshal(raw, &templates); err != nil {
+			return nil, err
+		}
+		return templates, nil
+	}
+	var envelope struct {
+		Result []Template `json:"result"`
+		Data   []Template `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Result != nil {
+		return envelope.Result, nil
+	}
+	return envelope.Data, nil
 }
 
 func (r *Request) EnableOutput(hash string, enable bool) (bool, error) {

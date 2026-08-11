@@ -17,13 +17,14 @@ import (
 )
 
 type ExportOptions struct {
-	URL         string
-	OutputRoot  string
-	Format      string
-	Overwrite   bool
-	RetryFailed bool
-	DryRun      bool
-	MockData    string
+	URL              string
+	OutputRoot       string
+	Format           string
+	IncludeTemplates bool
+	Overwrite        bool
+	RetryFailed      bool
+	DryRun           bool
+	MockData         string
 }
 
 func ExportWorkspace(opts ExportOptions) error {
@@ -105,7 +106,28 @@ func ExportWorkspace(opts ExportOptions) error {
 		logger.Println("dry-run enabled, only rendering tree")
 		return renderTreeToFile(filepath.Join(workspaceRoot, "dry_run_tree.txt"), tree)
 	}
-	return exportChildren(req, opts, logger, store, workspaceRoot, "", tree.Roots)
+	if err := exportChildren(req, opts, logger, store, workspaceRoot, "", tree.Roots); err != nil {
+		return err
+	}
+	if !opts.IncludeTemplates {
+		return nil
+	}
+	templates, err := req.GetTemplates(hashSpace)
+	if err != nil {
+		return err
+	}
+	result, err := exportTemplatesForWorkspace(req, TemplateExportOptions{
+		URL:         opts.URL,
+		OutputRoot:  opts.OutputRoot,
+		Cookie:      cookie,
+		Overwrite:   opts.Overwrite,
+		RetryFailed: opts.RetryFailed,
+	}, filepath.Join(workspaceRoot, "templates"), templates)
+	if err != nil {
+		return err
+	}
+	logTemplateResult(logger, result)
+	return nil
 }
 
 type treeNode struct {

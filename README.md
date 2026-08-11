@@ -3,6 +3,7 @@
 这个仓库包含三部分能力：
 
 - `go run .`：原有所思知识库导出工具，将 `thoughts.teambition.com` Workspace 导出为 `docx` 或 `html`。
+- `go run ./cmd/tb-templates`：独立导出一个所思 Workspace 的全部知识库模板，同时生成 DOCX 和 HTML 压缩包。
 - `go run ./cmd/tb-inventory`：Teambition 官方 OpenAPI SDK 路径，用 App ID / App Secret 抓取项目文件元数据。
 - `go run ./cmd/tb-web-inventory`：旧爬虫浏览器会话路径，打开临时浏览器登录后，使用 Web 接口抓取项目文件元数据。
 - `go run ./cmd/tb-files`：项目文件库采集器，发现来源目录树和元数据，并可选下载文件本体。
@@ -22,6 +23,45 @@ go run .
 ```bash
 go run . -url "https://thoughts.teambition.com/workspaces/xxxxxx/overview" -output exports -format docx
 ```
+
+如需在正文导出后同时导出知识库模板：
+
+```powershell
+go run . -url "https://thoughts.teambition.com/workspaces/xxxxxx/overview" -output exports -format docx -include-templates
+```
+
+只运行模板模块：
+
+```powershell
+go run ./cmd/tb-templates `
+  -url "https://thoughts.teambition.com/workspaces/xxxxxx/overview" `
+  -output exports `
+  -retry-failed
+```
+
+一次登录后，从所思主页发现并导出当前账号可见的全部知识库模板：
+
+```powershell
+go run ./cmd/tb-templates-all `
+  -url "https://thoughts.teambition.com/" `
+  -output "./exports/templates-all" `
+	-profile-dir "$env:LOCALAPPDATA/thoughtsexport/template-browser-profile" `
+  -retry-failed
+```
+
+批量模板导出合同当前为 `thoughts-template-export/v2`。每个模板继续保留
+`template_source.json`、`template_preview.json`、HTML 和 DOCX，并额外输出：
+
+- `assets_manifest.json`：图片和附件的稳定 `storage_key`、原始文件名、MIME、大小、签名到期时间、本地 POSIX 路径、下载状态及 SHA-256；实体保存在模板目录的 `assets/` 中。
+- `links_manifest.json`：链接所在块 ID、从零开始的块序号、从一开始的块编号、锚文本和原始 URL；对应链接同时保留在 HTML 的 `<a href>` 中。
+- `validation_report.json`：全批次模板、资产、图片、附件、已下载/待下载附件、链接、缺失文件、哈希不一致和失败项统计。
+
+任一正文、HTML、DOCX 或资产下载失败都会使模板状态变为 `failed`，不会以
+`success` 掩盖不完整输出。HTML 图片使用相对 `assets/` 路径，可随导出目录迁移。
+
+批量入口使用持久化的专用 Chrome 配置目录：首次运行登录一次，后续增量重跑可复用登录态。它会生成 `workspaces_manifest.json`，并为每个知识库单独生成版本化的 `templates_manifest.json`。模板合同使用 `template_id` 作为来源唯一键，保留独立的 `content_id`、`template_source.json`、`template_preview.json`、HTML、DOCX、资源清单、SHA-256 和分项状态。所有 manifest 路径均相对导出根目录并使用 POSIX 分隔符，便于 TeamFlow 在其他机器增量导入。
+
+模板按 `<组织>/<知识库>/templates/<模板名称>__<模板ID>/` 保存。每个模板同时生成真正的 `.docx` 和可编辑 `.html`。`templates_manifest.json` 记录模板 ID、正文 ID、输出路径和失败原因。单个模板失败不会中断其他模板。调试接口可加 `-include-raw`，将模板元数据和 preview section 保存为受限权限的 JSON。
 
 常用参数：
 

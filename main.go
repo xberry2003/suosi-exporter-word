@@ -22,14 +22,15 @@ var (
 )
 
 type cliConfig struct {
-	URL         string
-	Output      string
-	Format      string
-	Overwrite   bool
-	RetryFailed bool
-	DryRun      bool
-	MockData    string
-	Serve       bool
+	URL              string
+	Output           string
+	Format           string
+	IncludeTemplates bool
+	Overwrite        bool
+	RetryFailed      bool
+	DryRun           bool
+	MockData         string
+	Serve            bool
 }
 
 func main() {
@@ -48,6 +49,7 @@ func parseFlags() cliConfig {
 	flag.StringVar(&cfg.URL, "url", "", "workspace URL")
 	flag.StringVar(&cfg.Output, "output", filepath.Join("exports"), "output root")
 	flag.StringVar(&cfg.Format, "format", "docx", "export format")
+	flag.BoolVar(&cfg.IncludeTemplates, "include-templates", false, "export knowledge-base templates as DOCX and HTML packages")
 	flag.BoolVar(&cfg.Overwrite, "overwrite", false, "overwrite existing files")
 	flag.BoolVar(&cfg.RetryFailed, "retry-failed", false, "retry failed items")
 	flag.BoolVar(&cfg.DryRun, "dry-run", false, "dry run only")
@@ -67,6 +69,7 @@ func startWebMode(cfg cliConfig) {
 <label>Workspace URL</label><input name="url" placeholder="https://thoughts.teambition.com/workspaces/.../overview" />
 <label>Output root</label><input name="output" value="exports" />
 <label>Format</label><select name="format"><option value="docx">docx</option><option value="html">html</option></select>
+<label><input type="checkbox" name="include_templates" /> export knowledge-base templates (DOCX + HTML)</label><br>
 <label><input type="checkbox" name="overwrite" /> overwrite</label><br>
 <label><input type="checkbox" name="retry_failed" /> retry failed</label><br>
 <button type="submit">Start</button>
@@ -76,13 +79,14 @@ func startWebMode(cfg cliConfig) {
 	mux.HandleFunc("/receive/url", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		next := cliConfig{
-			URL:         r.FormValue("url"),
-			Output:      firstNonEmpty(r.FormValue("output"), cfg.Output, "exports"),
-			Format:      firstNonEmpty(r.FormValue("format"), cfg.Format, "docx"),
-			Overwrite:   r.FormValue("overwrite") == "on",
-			RetryFailed: r.FormValue("retry_failed") == "on",
-			DryRun:      cfg.DryRun,
-			MockData:    cfg.MockData,
+			URL:              r.FormValue("url"),
+			Output:           firstNonEmpty(r.FormValue("output"), cfg.Output, "exports"),
+			Format:           firstNonEmpty(r.FormValue("format"), cfg.Format, "docx"),
+			IncludeTemplates: r.FormValue("include_templates") == "on",
+			Overwrite:        r.FormValue("overwrite") == "on",
+			RetryFailed:      r.FormValue("retry_failed") == "on",
+			DryRun:           cfg.DryRun,
+			MockData:         cfg.MockData,
 		}
 		if next.URL == "" {
 			http.Error(w, "url is required", http.StatusBadRequest)
@@ -125,13 +129,14 @@ func execute(cfg cliConfig) error {
 	}
 	cfg.Output = firstNonEmpty(cfg.Output, "exports")
 	return logic.ExportWorkspace(logic.ExportOptions{
-		URL:         cfg.URL,
-		OutputRoot:  cfg.Output,
-		Format:      cfg.Format,
-		Overwrite:   cfg.Overwrite,
-		RetryFailed: cfg.RetryFailed,
-		DryRun:      cfg.DryRun,
-		MockData:    cfg.MockData,
+		URL:              cfg.URL,
+		OutputRoot:       cfg.Output,
+		Format:           cfg.Format,
+		IncludeTemplates: cfg.IncludeTemplates,
+		Overwrite:        cfg.Overwrite,
+		RetryFailed:      cfg.RetryFailed,
+		DryRun:           cfg.DryRun,
+		MockData:         cfg.MockData,
 	})
 }
 
