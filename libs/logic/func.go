@@ -8,10 +8,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 func FindExecPath() string {
@@ -74,21 +72,6 @@ func ReadOutput(rc io.ReadCloser, forward io.Writer, done func()) (wsURL string,
 		}()
 	}
 	return wsURL, nil
-}
-
-func ExitFunc(process *os.Process) {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	go func() {
-		for s := range c {
-			switch s {
-			case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
-				log.Println("exit", s)
-				_ = process.Kill()
-				os.Exit(0)
-			}
-		}
-	}()
 }
 
 func ClearDirectory(dir string) error {

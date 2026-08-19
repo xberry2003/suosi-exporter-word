@@ -1,25 +1,22 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"flag"
-	"html/template"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
+	"syscall"
+	"time"
 
+	"thoughtsexport/internal/control"
 	"thoughtsexport/libs/logic"
 )
 
 const defaultListenAddr = "127.0.0.1:43821"
-
-var (
-	runMu   sync.Mutex
-	running bool
-)
 
 type cliConfig struct {
 	URL              string
@@ -31,6 +28,11 @@ type cliConfig struct {
 	DryRun           bool
 	MockData         string
 	Serve            bool
+	Listen           string
+	DataDir          string
+	WebOutput        string
+	WebConcurrency   int
+	OpenBrowser      bool
 }
 
 func main() {
@@ -55,73 +57,51 @@ func parseFlags() cliConfig {
 	flag.BoolVar(&cfg.DryRun, "dry-run", false, "dry run only")
 	flag.StringVar(&cfg.MockData, "mock-data", "", "mock tree json file")
 	flag.BoolVar(&cfg.Serve, "serve", false, "force web mode")
+	flag.StringVar(&cfg.Listen, "listen", defaultListenAddr, "web listen address")
+	flag.StringVar(&cfg.DataDir, "data-dir", filepath.Join("runtime", "data"), "web runtime data directory")
+	flag.StringVar(&cfg.WebOutput, "web-output", filepath.Join("runtime", "artifacts"), "web job artifact directory")
+	flag.IntVar(&cfg.WebConcurrency, "web-concurrency", 1, "maximum concurrent web jobs")
+	flag.BoolVar(&cfg.OpenBrowser, "open-browser", true, "open the web console in the default browser")
 	flag.Parse()
 	return cfg
 }
 
 func startWebMode(cfg cliConfig) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		const tpl = `<!doctype html><html><head><meta charset="utf-8"><title>Thoughts Export</title>
-<style>body{font-family:Arial,sans-serif;margin:32px auto;max-width:900px}input,select{width:100%;padding:8px;margin:6px 0 16px}button{padding:10px 18px}</style>
-</head><body><h1>Thoughts Export</h1>
-<form method="POST" action="/receive/url">
-<label>Workspace URL</label><input name="url" placeholder="https://thoughts.teambition.com/workspaces/.../overview" />
-<label>Output root</label><input name="output" value="exports" />
-<label>Format</label><select name="format"><option value="docx">docx</option><option value="html">html</option></select>
-<label><input type="checkbox" name="include_templates" /> export knowledge-base templates (DOCX + HTML)</label><br>
-<label><input type="checkbox" name="overwrite" /> overwrite</label><br>
-<label><input type="checkbox" name="retry_failed" /> retry failed</label><br>
-<button type="submit">Start</button>
-</form></body></html>`
-		_ = template.Must(template.New("web").Parse(tpl)).Execute(w, nil)
+	app, err := control.NewServer(control.ServerConfig{
+		DatabasePath: filepath.Join(cfg.DataDir, "jobs.sqlite"),
+		ArtifactRoot: cfg.WebOutput,
+		DataRoot:     cfg.DataDir,
+		Concurrency:  cfg.WebConcurrency,
+		Auth: control.AuthConfig{
+			APIBaseURL:    firstNonEmpty(os.Getenv("AUTH_API_BASE_URL"), "http://43.142.31.198:9999/emp/api"),
+			SessionSecret: firstNonEmpty(os.Getenv("AUTH_SESSION_SECRET"), controlRandomSessionSecret()),
+		},
+		SecureCookie: strings.EqualFold(os.Getenv("AUTH_COOKIE_SECURE"), "true"),
 	})
-	mux.HandleFunc("/receive/url", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		next := cliConfig{
-			URL:              r.FormValue("url"),
-			Output:           firstNonEmpty(r.FormValue("output"), cfg.Output, "exports"),
-			Format:           firstNonEmpty(r.FormValue("format"), cfg.Format, "docx"),
-			IncludeTemplates: r.FormValue("include_templates") == "on",
-			Overwrite:        r.FormValue("overwrite") == "on",
-			RetryFailed:      r.FormValue("retry_failed") == "on",
-			DryRun:           cfg.DryRun,
-			MockData:         cfg.MockData,
-		}
-		if next.URL == "" {
-			http.Error(w, "url is required", http.StatusBadRequest)
-			return
-		}
-		runMu.Lock()
-		if running {
-			runMu.Unlock()
-			writeJSON(w, map[string]interface{}{"success": true, "message": "task already running"})
-			return
-		}
-		running = true
-		runMu.Unlock()
-		go func() {
-			defer func() {
-				runMu.Lock()
-				running = false
-				runMu.Unlock()
-			}()
-			if err := execute(next); err != nil {
-				log.Println(err)
-			}
-			os.Exit(0)
-		}()
-		writeJSON(w, map[string]interface{}{"success": true, "message": "task started"})
-	})
-	srv := &http.Server{Addr: defaultListenAddr, Handler: mux}
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer app.Close()
+	srv := &http.Server{Addr: cfg.Listen, Handler: app, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Println(err)
+			log.Fatal(err)
 		}
 	}()
-	_ = logic.OpenURL("http://" + defaultListenAddr + "/")
-	select {}
+	address := "http://" + cfg.Listen + "/"
+	log.Printf("采集控制台已启动: %s", address)
+	if cfg.OpenBrowser {
+		_ = logic.OpenURL(address)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
 }
+
+func controlRandomSessionSecret() string { return control.RandomSessionSecret() }
 
 func execute(cfg cliConfig) error {
 	if cfg.Format == "" {
@@ -147,11 +127,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func writeJSON(w http.ResponseWriter, v interface{}) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
 }

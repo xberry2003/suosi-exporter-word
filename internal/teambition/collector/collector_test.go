@@ -49,11 +49,19 @@ func TestCollectorFixturePaginationAndResume(t *testing.T) {
 		case "ListProjectMembersV3":
 			payload = map[string]any{"items": []any{map[string]any{"id": "member-1", "userId": "user-1", "roleIds": []any{"role-1"}}}}
 		case "PostV3MemberQuery":
-			payload = map[string]any{"code": 200, "result": []any{map[string]any{"userId": "user-1", "name": "Alice", "profile": map[string]any{"email": "alice@example.test", "employeeNumber": "E-1"}, "isDisabled": false, "isResigned": false}}}
+			if args["userIds"] == "user-1" {
+				payload = map[string]any{"code": 200, "result": []any{map[string]any{"userId": "user-1", "name": "Alice", "profile": map[string]any{"email": "alice@example.test", "employeeNumber": "E-1"}, "isDisabled": false, "isResigned": false}}}
+			} else {
+				payload = map[string]any{"code": 200, "result": []any{map[string]any{"userId": "user-2", "name": "Former Member", "isDisabled": true, "isResigned": true}}}
+			}
 		case "QueryTaskV3":
-			payload = []any{map[string]any{"id": args["taskId"], "content": "fixture", "projectId": "project-1", "tasklistId": "group-1", "isDone": false, "involveMembers": []any{}}}
+			creatorID := "user-2"
+			if args["taskId"] == "task-2" {
+				creatorID = "user-3"
+			}
+			payload = []any{map[string]any{"id": args["taskId"], "content": "fixture", "projectId": "project-1", "tasklistId": "group-1", "creatorId": creatorID, "isDone": false, "involveMembers": []any{}}}
 		case "GetTaskLinksV3":
-			payload = map[string]any{"items": []any{map[string]any{"id": "link-1", "linkedType": "work", "linkedId": "work-1"}}}
+			payload = map[string]any{"items": []any{map[string]any{"id": "link-" + args["taskId"].(string), "linkedType": "work", "linkedId": "work-" + args["taskId"].(string)}}}
 		case "QueryTaskTfs":
 			payload = map[string]any{"items": []any{}}
 		case "BatchGetFileDetails":
@@ -101,8 +109,14 @@ func TestCollectorFixturePaginationAndResume(t *testing.T) {
 	}
 	assertRawRefsExist(t, filepath.Join(root, "teambition-collector", "project-1"))
 	users := readLines(t, filepath.Join(root, "teambition-collector", "project-1", "entities", "users.jsonl"))
-	if len(users) != 1 || !strings.Contains(users[0], `"external_id":"user-1"`) || !strings.Contains(users[0], `"display_name":"Alice"`) {
+	if len(users) != 2 || !strings.Contains(strings.Join(users, "\n"), `"external_id":"user-1"`) || !strings.Contains(strings.Join(users, "\n"), `"external_id":"user-2"`) {
 		t.Fatalf("user profile was not joined by userId: %v", users)
+	}
+	if m.Status != "succeeded" {
+		t.Fatalf("unavailable historical creator should not make the run partial: status=%s warnings=%v", m.Status, m.Warnings)
+	}
+	if warnings := strings.Join(m.Warnings, "\n"); !strings.Contains(warnings, "historical creator profile unavailable: user-3") || strings.Contains(warnings, "creator reference missing") {
+		t.Fatalf("unexpected historical creator warnings: %v", m.Warnings)
 	}
 	lines := readLines(t, filepath.Join(root, "teambition-collector", "project-1", "entities", "tasks.jsonl"))
 	if len(lines) != 2 {

@@ -24,15 +24,16 @@ type Config struct {
 	Concurrency                        int
 }
 type Collector struct {
-	client   *taskprobe.Client
-	cfg      Config
-	root     string
-	mu       sync.Mutex
-	counts   map[string]int
-	errors   []map[string]any
-	seen     map[string]bool
-	done     []string
-	warnings []string
+	client                  *taskprobe.Client
+	cfg                     Config
+	root                    string
+	mu                      sync.Mutex
+	counts                  map[string]int
+	errors                  []map[string]any
+	seen                    map[string]bool
+	done                    []string
+	warnings                []string
+	acceptedMissingCreators map[string]bool
 }
 type Manifest struct {
 	SchemaVersion     string            `json:"schema_version"`
@@ -57,7 +58,7 @@ func New(c *taskprobe.Client, cfg Config) *Collector {
 	if cfg.Concurrency < 1 {
 		cfg.Concurrency = 1
 	}
-	return &Collector{client: c, cfg: cfg, counts: map[string]int{}, seen: map[string]bool{}}
+	return &Collector{client: c, cfg: cfg, counts: map[string]int{}, seen: map[string]bool{}, acceptedMissingCreators: map[string]bool{}}
 }
 func (c *Collector) Run(ctx context.Context) (Manifest, error) {
 	if c.cfg.ProjectID == "" {
@@ -98,6 +99,7 @@ func (c *Collector) Run(ctx context.Context) (Manifest, error) {
 			c.addError("fetch_task", "task", fmt.Sprint(t["id"]), e, false)
 		}
 	}
+	c.resolveHistoricalCreators(ctx)
 	m.Counts = c.actualCounts()
 	validationWarnings, validationFailed := c.validateEntities()
 	m.FinishedAt = time.Now().UTC().Format(time.RFC3339)
@@ -421,6 +423,72 @@ func (c *Collector) collectProjectMembers(ctx context.Context) {
 	}
 }
 
+func (c *Collector) resolveHistoricalCreators(ctx context.Context) {
+	existing := map[string]bool{}
+	for _, user := range readEntityMaps(filepath.Join(c.root, "entities", "users.jsonl")) {
+		if id, _ := user["external_id"].(string); id != "" {
+			existing[id] = true
+		}
+	}
+	missing := map[string]bool{}
+	for _, task := range readEntityMaps(filepath.Join(c.root, "entities", "tasks.jsonl")) {
+		data, _ := task["data"].(map[string]any)
+		if id, _ := data["creator_external_user_id"].(string); id != "" && !existing[id] {
+			missing[id] = true
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(missing))
+	for id := range missing {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	raw, _, err := c.client.Call(ctx, "PostV3MemberQuery", map[string]any{
+		"userIds":   strings.Join(ids, ","),
+		"isDisable": "all",
+	})
+	if err != nil {
+		for _, id := range ids {
+			c.acceptHistoricalCreator(id, "profile lookup failed")
+		}
+		return
+	}
+	data := unwrap(raw)
+	c.writeRaw("users", "PostV3MemberQuery-historical-creators", data)
+	for _, item := range arrayFrom(data) {
+		profile, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := profile["userId"].(string)
+		if id == "" || !missing[id] || existing[id] {
+			continue
+		}
+		source := mergeUserSource(nil, profile)
+		source["userId"] = id
+		source["profileLookupStatus"] = "matched"
+		source["historicalCreator"] = true
+		c.writeRaw("users", id, mustJSON(source))
+		if writeErr := c.writeEntity("users", id, c.envelope("user", id, source, normalizeUser(source))); writeErr != nil {
+			c.addError("write_historical_creator", "user", id, writeErr, false)
+			continue
+		}
+		existing[id] = true
+	}
+	for _, id := range ids {
+		if !existing[id] {
+			c.acceptHistoricalCreator(id, "profile unavailable")
+		}
+	}
+}
+
+func (c *Collector) acceptHistoricalCreator(id, reason string) {
+	c.acceptedMissingCreators[id] = true
+	c.warnings = append(c.warnings, "historical creator "+reason+": "+id)
+}
+
 // ensureStageGroup creates a clearly marked fallback when stage metadata is not
 // available through SearchStagesV3. It never derives a name from a task title.
 func (c *Collector) ensureStageGroup(task map[string]any) {
@@ -701,7 +769,9 @@ func (c *Collector) validateEntities() ([]string, bool) {
 			warnings = append(warnings, "task group reference missing: "+group)
 		}
 		if user, _ := data["creator_external_user_id"].(string); user != "" && !ids["users"][user] {
-			warnings = append(warnings, "creator reference missing: "+user)
+			if !c.acceptedMissingCreators[user] {
+				warnings = append(warnings, "creator reference missing: "+user)
+			}
 		}
 	}
 	for _, name := range []string{"attachments"} {

@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">所思控制台服务器后端总体架构</title>
+  <desc id="desc">展示浏览器、Nginx、Go 服务、员工认证、SQLite、三个采集模块、Python 登录态服务、Chromium、MCP 与产物目录之间的关系。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#315a4a"/>
+    </marker>
+    <style>
+      .title { font: 700 30px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #14251f; }
+      .subtitle { font: 400 15px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #52635d; }
+      .head { font: 700 18px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #14251f; }
+      .body { font: 400 14px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #31433c; }
+      .small { font: 400 12px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #5e6e68; }
+      .box { fill: #ffffff; stroke: #9aa9a3; stroke-width: 1.5; rx: 6; }
+      .core { fill: #edf6f1; stroke: #16704f; stroke-width: 2; rx: 6; }
+      .auth { fill: #fff7e8; stroke: #b7791f; stroke-width: 1.5; rx: 6; }
+      .data { fill: #f4f1fb; stroke: #75659c; stroke-width: 1.5; rx: 6; }
+      .module { fill: #f8faf9; stroke: #5f756c; stroke-width: 1.5; rx: 6; }
+      .line { fill: none; stroke: #315a4a; stroke-width: 2; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #7d8d87; stroke-width: 1.5; stroke-dasharray: 7 6; marker-end: url(#arrow); }
+      .band { fill: #f5f7f6; stroke: #d8dfdc; stroke-width: 1; rx: 6; }
+    </style>
+  </defs>
+  <rect width="1440" height="900" fill="#fbfcfb"/>
+  <text x="60" y="58" class="title">服务器后端总体架构</text>
+  <text x="60" y="86" class="subtitle">统一页面/API + SQLite 作业引擎 + 三个模块适配器</text>
+
+  <rect x="60" y="125" width="190" height="88" class="box"/>
+  <text x="155" y="160" text-anchor="middle" class="head">用户浏览器</text>
+  <text x="155" y="187" text-anchor="middle" class="body">HTTPS /Suosi/</text>
+
+  <rect x="315" y="125" width="190" height="88" class="box"/>
+  <text x="410" y="160" text-anchor="middle" class="head">Nginx</text>
+  <text x="410" y="187" text-anchor="middle" class="body">反向代理与 TLS</text>
+
+  <rect x="575" y="112" width="290" height="114" class="core"/>
+  <text x="720" y="150" text-anchor="middle" class="head">Go suosi-control</text>
+  <text x="720" y="177" text-anchor="middle" class="body">127.0.0.1:9869</text>
+  <text x="720" y="201" text-anchor="middle" class="small">认证中间件 / API / Manager / worker</text>
+
+  <path d="M250 169 H315" class="line"/>
+  <path d="M505 169 H575" class="line"/>
+
+  <rect x="965" y="112" width="390" height="114" class="auth"/>
+  <text x="1160" y="150" text-anchor="middle" class="head">员工认证系统</text>
+  <text x="1160" y="177" text-anchor="middle" class="body">登录 / 注册 / 找回 / 到期检查</text>
+  <text x="1160" y="201" text-anchor="middle" class="small">Go 签发 HMAC HttpOnly 会话</text>
+  <path d="M865 154 H965" class="dash"/>
+  <path d="M965 194 H865" class="dash"/>
+
+  <rect x="60" y="285" width="1295" height="170" class="band"/>
+  <text x="85" y="317" class="head">统一作业层</text>
+  <rect x="90" y="340" width="250" height="82" class="data"/>
+  <text x="215" y="372" text-anchor="middle" class="head">SQLite jobs</text>
+  <text x="215" y="398" text-anchor="middle" class="small">状态 / 用户 / 输入 / 结果 / 错误</text>
+  <rect x="395" y="340" width="250" height="82" class="box"/>
+  <text x="520" y="372" text-anchor="middle" class="head">预检与队列</text>
+  <text x="520" y="398" text-anchor="middle" class="small">二次预检 / 并发槽 / 取消上下文</text>
+  <rect x="700" y="340" width="250" height="82" class="box"/>
+  <text x="825" y="372" text-anchor="middle" class="head">用户隔离产物</text>
+  <text x="825" y="398" text-anchor="middle" class="small">模块 / user-ID / job-ID</text>
+  <rect x="1005" y="340" width="310" height="82" class="box"/>
+  <text x="1160" y="372" text-anchor="middle" class="head">文件与 ZIP API</text>
+  <text x="1160" y="398" text-anchor="middle" class="small">目录包含校验 / 按需流式压缩</text>
+  <path d="M720 226 V285" class="line"/>
+
+  <rect x="60" y="505" width="390" height="130" class="module"/>
+  <text x="255" y="540" text-anchor="middle" class="head">01 所思导出</text>
+  <text x="255" y="568" text-anchor="middle" class="body">Cookie 验证 → 工作区树 → 正文/模板</text>
+  <text x="255" y="595" text-anchor="middle" class="small">manifest / failed_docs / DOCX / HTML</text>
+
+  <rect x="525" y="505" width="390" height="130" class="module"/>
+  <text x="720" y="540" text-anchor="middle" class="head">02 TB 文件下载</text>
+  <text x="720" y="568" text-anchor="middle" class="body">browser/SDK → 目录 BFS → 文件下载</text>
+  <text x="720" y="595" text-anchor="middle" class="small">checkpoint / SHA-256 / browse mirror</text>
+
+  <rect x="990" y="505" width="365" height="130" class="module"/>
+  <text x="1172" y="540" text-anchor="middle" class="head">03 TB 任务采集</text>
+  <text x="1172" y="568" text-anchor="middle" class="body">MCP → 项目/任务/关系/附件</text>
+  <text x="1172" y="595" text-anchor="middle" class="small">JSONL / checkpoint / manifest</text>
+
+  <path d="M520 455 V480 H255 V505" class="line"/>
+  <path d="M720 455 V505" class="line"/>
+  <path d="M920 455 V480 H1172 V505" class="line"/>
+
+  <rect x="60" y="700" width="390" height="130" class="auth"/>
+  <text x="255" y="735" text-anchor="middle" class="head">Python 登录态服务 :9881</text>
+  <text x="255" y="762" text-anchor="middle" class="body">检查 Cookie / 密码自动登录</text>
+  <text x="255" y="789" text-anchor="middle" class="small">只返回认证状态，不返回 Cookie</text>
+
+  <rect x="525" y="700" width="390" height="130" class="auth"/>
+  <text x="720" y="735" text-anchor="middle" class="head">长期 Chromium CDP :9222</text>
+  <text x="720" y="762" text-anchor="middle" class="body">固定 Profile / TB_ACCESS_TOKEN</text>
+  <text x="720" y="789" text-anchor="middle" class="small">所思与 TB 文件 browser 模式复用</text>
+
+  <rect x="990" y="700" width="365" height="130" class="data"/>
+  <text x="1172" y="735" text-anchor="middle" class="head">Teambition MCP</text>
+  <text x="1172" y="762" text-anchor="middle" class="body">JSON-RPC initialize / tools/call</text>
+  <text x="1172" y="789" text-anchor="middle" class="small">Host + Bearer Token</text>
+
+  <path d="M255 635 V700" class="line"/>
+  <path d="M625 635 V670 H450 V765" class="dash"/>
+  <path d="M450 765 H525" class="line"/>
+  <path d="M255 700 V670 H720 V700" class="line"/>
+  <path d="M1172 635 V700" class="line"/>
+</svg>

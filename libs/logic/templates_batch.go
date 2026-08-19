@@ -163,7 +163,10 @@ func discoverWorkspacesWithLogin(homeURL, profileDir string) ([]DiscoveredWorksp
 	if err := chromedp.Run(taskCtx, chromedp.Navigate(homeURL)); err != nil {
 		return nil, "", fmt.Errorf("navigate Thoughts home: %w", err)
 	}
-	cookie := WaitLoginReturnCookieString(taskCtx, "TB_ACCESS_TOKEN")
+	cookie, err := WaitLoginReturnCookieString(taskCtx, "TB_ACCESS_TOKEN")
+	if err != nil {
+		return nil, "", err
+	}
 	deadline := time.Now().Add(30 * time.Second)
 	var discovered []DiscoveredWorkspace
 	stableRounds := 0

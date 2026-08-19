@@ -1,6 +1,8 @@
 # 所思导出与 Teambition 项目清单工具
 
-这个仓库包含三部分能力：
+这个仓库包含统一采集控制台和兼容的命令行能力：
+
+- `go run .`：启动模块化采集控制台，当前提供所思导出、TB 文件下载、TB 任务采集三个模块。任务状态保存在 SQLite，运行产物按任务隔离。
 
 - `go run .`：原有所思知识库导出工具，将 `thoughts.teambition.com` Workspace 导出为 `docx` 或 `html`。
 - `go run ./cmd/tb-templates`：独立导出一个所思 Workspace 的全部知识库模板，同时生成 DOCX 和 HTML 压缩包。
@@ -10,13 +12,34 @@
 
 所有 Teambition 命令均只采集来源数据；它们不会调用 TeamFlow、写入 TeamFlow 数据库或生成 TeamFlow 标识。
 
-## 所思知识库导出
+## 统一采集控制台
 
-直接启动本地页面：
-
-```bash
+```powershell
 go run .
 ```
+
+默认打开 `http://127.0.0.1:43821/`。运行数据保存在 `runtime/data`，采集产物保存在 `runtime/artifacts/jobs/<job-id>`，两者均不会进入 Git。
+
+三个页面模块都可以填写“本地输出目录”。留空时使用上述默认目录；填写服务端绝对路径后，任务产物写入 `<本地输出目录>/<job-id>`。页面运行在远程服务器时，该路径指服务器磁盘，而不是访问者电脑。
+
+所思导出使用 `runtime/data/browser-profiles/thoughts` 保存专用浏览器登录态。生产环境建议设置 `TEAMBITION_CDP_URL=http://127.0.0.1:9222`，让所思导出和 TB 文件模块共享一个长期运行、使用固定 Profile 的 Chromium。控制台在内存中复用已验证 Cookie，服务重启后从该浏览器恢复；不会为每一个采集任务重新启动浏览器。可在服务器密钥存储中配置 `TEAMBITION_LOGIN_USERNAME` 与 `TEAMBITION_LOGIN_PASSWORD`，登录态失效时程序会自动尝试账号密码登录。账号密码、Cookie 和 Token 不进入页面、日志、SQLite 或 manifest。若平台要求验证码、扫码或其他风控验证，通过受保护的 noVNC/SSH 隧道进入同一浏览器完成人工授权。CDP 端口不得对公网开放。
+
+服务器混合认证链路还需设置 `TEAMBITION_AUTH_URL=http://127.0.0.1:9881`。`scripts/teambition_auth.py` 只负责检查或恢复长期 Chromium 中的登录态，Go 在认证就绪后直接从同一 CDP 浏览器读取 Cookie 并执行采集。Python 服务不返回 Cookie 或 Token 值。服务定义位于 `deploy/systemd/`，启动顺序为 `suosi-teambition-browser` -> `suosi-teambition-auth` -> `suosi-control`。
+
+服务器部署时可显式配置地址、数据目录、产物目录和并发数：
+
+```powershell
+go run . -serve `
+  -listen "0.0.0.0:43821" `
+  -data-dir "D:\suosi-data" `
+  -web-output "D:\suosi-artifacts" `
+  -web-concurrency 1 `
+  -open-browser=false
+```
+
+首版未接入登录系统，不应直接暴露到公网。建议只监听内网地址，或由带认证和 HTTPS 的反向代理提供访问入口。
+
+## 所思知识库导出
 
 命令行导出：
 

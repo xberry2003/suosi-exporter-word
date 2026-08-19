@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
 )
 
@@ -20,8 +21,9 @@ type Session struct {
 	Referer      string
 }
 
-// BrowserSession owns one visible browser for the whole batch. Its profile is
-// kept on disk so an interrupted run can normally reuse the existing login.
+// BrowserSession owns one browser tab for the whole batch. When
+// TEAMBITION_CDP_URL is set it attaches to the shared persistent browser;
+// otherwise it starts a local browser with the supplied profile directory.
 type BrowserSession struct {
 	ctx             context.Context
 	cancelBrowser   context.CancelFunc
@@ -29,10 +31,6 @@ type BrowserSession struct {
 }
 
 func OpenBrowserSession(ctx context.Context, startURL, profileDir string, loginTimeout time.Duration) (*BrowserSession, Session, error) {
-	execPath := logic.FindExecPath()
-	if execPath == "" {
-		return nil, Session{}, errors.New("Chrome or Edge was not found")
-	}
 	if profileDir == "" {
 		return nil, Session{}, errors.New("browser profile directory is required")
 	}
@@ -44,14 +42,38 @@ func OpenBrowserSession(ctx context.Context, startURL, profileDir string, loginT
 		return nil, Session{}, fmt.Errorf("create browser profile: %w", err)
 	}
 
-	allocatorOptions := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(execPath),
-		chromedp.UserDataDir(absProfile),
-		chromedp.Flag("headless", false),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("no-default-browser-check", true),
-	)
-	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(ctx, allocatorOptions...)
+	var allocatorCtx context.Context
+	var cancelAllocator context.CancelFunc
+	if remoteURL := strings.TrimSpace(os.Getenv("TEAMBITION_CDP_URL")); remoteURL != "" {
+		if logic.TeambitionAuthManagerConfigured() {
+			authCtx := ctx
+			var cancel context.CancelFunc
+			if loginTimeout > 0 {
+				authCtx, cancel = context.WithTimeout(ctx, loginTimeout)
+				defer cancel()
+			}
+			if err := logic.EnsureTeambitionBrowserSession(authCtx, startURL); err != nil {
+				return nil, Session{}, err
+			}
+		}
+		allocatorCtx, cancelAllocator = chromedp.NewRemoteAllocator(ctx, remoteURL)
+	} else {
+		execPath := logic.FindExecPath()
+		if execPath == "" {
+			return nil, Session{}, errors.New("Chrome or Edge was not found")
+		}
+		allocatorOptions := append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath(execPath),
+			chromedp.UserDataDir(absProfile),
+			chromedp.Flag("headless", true),
+			chromedp.Flag("disable-gpu", true),
+			chromedp.Flag("disable-dev-shm-usage", true),
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("no-first-run", true),
+			chromedp.Flag("no-default-browser-check", true),
+		)
+		allocatorCtx, cancelAllocator = chromedp.NewExecAllocator(ctx, allocatorOptions...)
+	}
 	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx, chromedp.WithErrorf(browserErrorLogger))
 	browser := &BrowserSession{ctx: browserCtx, cancelBrowser: cancelBrowser, cancelAllocator: cancelAllocator}
 	if err := chromedp.Run(browserCtx, chromedp.Navigate(startURL)); err != nil {
@@ -135,7 +157,7 @@ func allCookies(ctx context.Context) ([]*network.Cookie, error) {
 	var cookies []*network.Cookie
 	err := chromedp.Run(ctx, chromedp.ActionFunc(func(actionCtx context.Context) error {
 		var err error
-		cookies, err = network.GetAllCookies().Do(actionCtx)
+		cookies, err = storage.GetCookies().Do(actionCtx)
 		return err
 	}))
 	return cookies, err

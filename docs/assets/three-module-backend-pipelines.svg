@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1040" viewBox="0 0 1680 1040" role="img" aria-labelledby="title desc">
+  <title id="title">三个模块的后端处理流水线</title>
+  <desc id="desc">分别展示所思导出、TB 文件下载和 TB 任务采集从输入预检到产物与状态判定的完整流程。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#315a4a"/>
+    </marker>
+    <style>
+      .title { font: 700 30px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #14251f; }
+      .sub { font: 400 15px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #5c6a65; }
+      .laneTitle { font: 700 21px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #ffffff; }
+      .head { font: 700 16px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #173329; }
+      .body { font: 400 13px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #40534c; }
+      .tiny { font: 400 12px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #66756f; }
+      .laneSmall { font: 400 12px 'Microsoft YaHei','Noto Sans CJK SC',sans-serif; fill: #edf4f1; }
+      .step { fill: #ffffff; stroke: #9eaaa6; stroke-width: 1.4; rx: 6; }
+      .result { fill: #edf6f1; stroke: #16704f; stroke-width: 1.7; rx: 6; }
+      .warn { fill: #fff7e8; stroke: #b7791f; stroke-width: 1.4; rx: 6; }
+      .line { fill: none; stroke: #315a4a; stroke-width: 2; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #7d8d87; stroke-width: 1.5; stroke-dasharray: 6 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1680" height="1040" fill="#fbfcfb"/>
+  <text x="60" y="58" class="title">三个模块的后端处理流水线</text>
+  <text x="60" y="86" class="sub">所有模块先进入统一认证、预检和 SQLite 作业引擎，再执行各自适配器</text>
+
+  <rect x="45" y="125" width="1590" height="250" fill="#f4f8f6" stroke="#d8e1dd" rx="6"/>
+  <rect x="45" y="125" width="210" height="250" fill="#176b4d" rx="6"/>
+  <text x="150" y="180" text-anchor="middle" class="laneTitle">01 所思导出</text>
+  <text x="150" y="215" text-anchor="middle" class="laneTitle">Thoughts</text>
+  <text x="150" y="280" text-anchor="middle" class="laneSmall">浏览器登录态</text>
+  <rect x="290" y="165" width="205" height="150" class="step"/>
+  <text x="392" y="198" text-anchor="middle" class="head">输入与预检</text>
+  <text x="392" y="229" text-anchor="middle" class="body">workspace URL</text>
+  <text x="392" y="252" text-anchor="middle" class="body">DOCX / HTML</text>
+  <text x="392" y="275" text-anchor="middle" class="body">服务器目录可写</text>
+  <rect x="540" y="165" width="205" height="150" class="step"/>
+  <text x="642" y="198" text-anchor="middle" class="head">取得登录态</text>
+  <text x="642" y="229" text-anchor="middle" class="body">内存 Cookie 优先</text>
+  <text x="642" y="252" text-anchor="middle" class="body">Python ensure</text>
+  <text x="642" y="275" text-anchor="middle" class="body">CDP 读取并验证</text>
+  <rect x="790" y="165" width="205" height="150" class="step"/>
+  <text x="892" y="198" text-anchor="middle" class="head">读取工作区</text>
+  <text x="892" y="229" text-anchor="middle" class="body">GetWorkspace</text>
+  <text x="892" y="252" text-anchor="middle" class="body">GetAllNodes</text>
+  <text x="892" y="275" text-anchor="middle" class="body">重建父子树</text>
+  <rect x="1040" y="165" width="235" height="150" class="step"/>
+  <text x="1157" y="198" text-anchor="middle" class="head">导出与断点</text>
+  <text x="1157" y="229" text-anchor="middle" class="body">逐节点请求下载地址</text>
+  <text x="1157" y="252" text-anchor="middle" class="body">正文 / 可选模板资源</text>
+  <text x="1157" y="275" text-anchor="middle" class="body">实时更新 manifest</text>
+  <rect x="1320" y="165" width="265" height="150" class="result"/>
+  <text x="1452" y="198" text-anchor="middle" class="head">产物</text>
+  <text x="1452" y="229" text-anchor="middle" class="body">目录树 / 正文 / 模板</text>
+  <text x="1452" y="252" text-anchor="middle" class="body">manifest / failed_docs</text>
+  <text x="1452" y="275" text-anchor="middle" class="body">日志 / ZIP 下载</text>
+  <path d="M495 240 H540" class="line"/><path d="M745 240 H790" class="line"/><path d="M995 240 H1040" class="line"/><path d="M1275 240 H1320" class="line"/>
+
+  <rect x="45" y="405" width="1590" height="250" fill="#f7f8fa" stroke="#d9dde2" rx="6"/>
+  <rect x="45" y="405" width="210" height="250" fill="#3d5e75" rx="6"/>
+  <text x="150" y="460" text-anchor="middle" class="laneTitle">02 TB 文件</text>
+  <text x="150" y="495" text-anchor="middle" class="laneTitle">Files</text>
+  <text x="150" y="560" text-anchor="middle" class="laneSmall">Browser / SDK</text>
+  <rect x="290" y="445" width="205" height="150" class="step"/>
+  <text x="392" y="478" text-anchor="middle" class="head">输入与预检</text>
+  <text x="392" y="509" text-anchor="middle" class="body">/works/{rootId}</text>
+  <text x="392" y="532" text-anchor="middle" class="body">来源 / 分页 / 并发</text>
+  <text x="392" y="555" text-anchor="middle" class="body">凭据或浏览器</text>
+  <rect x="540" y="445" width="205" height="150" class="step"/>
+  <text x="642" y="478" text-anchor="middle" class="head">数据源适配</text>
+  <text x="642" y="509" text-anchor="middle" class="body">Cookie 浏览器 API</text>
+  <text x="642" y="532" text-anchor="middle" class="body">或 OpenAPI SDK</text>
+  <text x="642" y="555" text-anchor="middle" class="body">统一 PageSource</text>
+  <rect x="790" y="445" width="205" height="150" class="step"/>
+  <text x="892" y="478" text-anchor="middle" class="head">目录发现</text>
+  <text x="892" y="509" text-anchor="middle" class="body">BFS + 分页</text>
+  <text x="892" y="532" text-anchor="middle" class="body">external ID 去重</text>
+  <text x="892" y="555" text-anchor="middle" class="body">原子 checkpoint</text>
+  <rect x="1040" y="445" width="235" height="150" class="step"/>
+  <text x="1157" y="478" text-anchor="middle" class="head">文件下载</text>
+  <text x="1157" y="509" text-anchor="middle" class="body">短期 URL 域名校验</text>
+  <text x="1157" y="532" text-anchor="middle" class="body">partial → SHA-256</text>
+  <text x="1157" y="555" text-anchor="middle" class="body">断点 / 重试 / 校验</text>
+  <rect x="1320" y="445" width="265" height="150" class="result"/>
+  <text x="1452" y="478" text-anchor="middle" class="head">产物</text>
+  <text x="1452" y="509" text-anchor="middle" class="body">节点 JSONL / assets</text>
+  <text x="1452" y="532" text-anchor="middle" class="body">browse / checksums</text>
+  <text x="1452" y="555" text-anchor="middle" class="body">manifest / errors</text>
+  <path d="M495 520 H540" class="line"/><path d="M745 520 H790" class="line"/><path d="M995 520 H1040" class="line"/><path d="M1275 520 H1320" class="line"/>
+
+  <rect x="45" y="685" width="1590" height="300" fill="#f8f6fb" stroke="#e0dce9" rx="6"/>
+  <rect x="45" y="685" width="210" height="300" fill="#665987" rx="6"/>
+  <text x="150" y="740" text-anchor="middle" class="laneTitle">03 TB 任务</text>
+  <text x="150" y="775" text-anchor="middle" class="laneTitle">Tasks</text>
+  <text x="150" y="840" text-anchor="middle" class="laneSmall">MCP JSON-RPC</text>
+  <rect x="290" y="725" width="205" height="170" class="step"/>
+  <text x="392" y="758" text-anchor="middle" class="head">输入与预检</text>
+  <text x="392" y="789" text-anchor="middle" class="body">project ID / URL</text>
+  <text x="392" y="812" text-anchor="middle" class="body">since / resume</text>
+  <text x="392" y="835" text-anchor="middle" class="body">MCP Host + Token</text>
+  <rect x="540" y="725" width="205" height="170" class="step"/>
+  <text x="642" y="758" text-anchor="middle" class="head">MCP 会话</text>
+  <text x="642" y="789" text-anchor="middle" class="body">initialize</text>
+  <text x="642" y="812" text-anchor="middle" class="body">tools/call + SSE</text>
+  <text x="642" y="835" text-anchor="middle" class="body">超时与指数退避</text>
+  <rect x="790" y="725" width="205" height="170" class="step"/>
+  <text x="892" y="758" text-anchor="middle" class="head">项目与任务</text>
+  <text x="892" y="789" text-anchor="middle" class="body">项目 / 阶段 / 成员</text>
+  <text x="892" y="812" text-anchor="middle" class="body">任务 / 状态 / 关系</text>
+  <text x="892" y="835" text-anchor="middle" class="body">附件 / checkpoint</text>
+  <rect x="1040" y="715" width="235" height="190" class="warn"/>
+  <text x="1157" y="748" text-anchor="middle" class="head">历史创建人补查</text>
+  <text x="1157" y="779" text-anchor="middle" class="body">比对 tasks 与 users</text>
+  <text x="1157" y="802" text-anchor="middle" class="body">PostV3MemberQuery</text>
+  <text x="1157" y="825" text-anchor="middle" class="body">查到则补写用户</text>
+  <text x="1157" y="848" text-anchor="middle" class="body">查不到仅 warning</text>
+  <text x="1157" y="875" text-anchor="middle" class="tiny">不单独触发 partial</text>
+  <rect x="1320" y="725" width="265" height="170" class="result"/>
+  <text x="1452" y="758" text-anchor="middle" class="head">校验与产物</text>
+  <text x="1452" y="789" text-anchor="middle" class="body">实体 JSONL / assets</text>
+  <text x="1452" y="812" text-anchor="middle" class="body">manifest / errors</text>
+  <text x="1452" y="835" text-anchor="middle" class="body">succeeded / partial</text>
+  <text x="1452" y="858" text-anchor="middle" class="body">failed / ZIP</text>
+  <path d="M495 810 H540" class="line"/><path d="M745 810 H790" class="line"/><path d="M995 810 H1040" class="line"/><path d="M1275 810 H1320" class="line"/>
+
+  <text x="290" y="955" class="tiny">统一结束：结果写回 jobs.sqlite；页面按用户查询；完成后按需流式生成 ZIP。</text>
+</svg>

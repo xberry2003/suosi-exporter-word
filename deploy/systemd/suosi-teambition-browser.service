@@ -1,0 +1,18 @@
+[Unit]
+Description=Suosi persistent Teambition Chromium
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStartPre=/usr/bin/mkdir -p /www/wwwroot/suosi-control/runtime/data/browser-profiles/shared-teambition
+ExecStart=/usr/bin/google-chrome --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --lang=zh-CN --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir=/www/wwwroot/suosi-control/runtime/data/browser-profiles/shared-teambition about:blank
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

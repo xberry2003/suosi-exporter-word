@@ -150,7 +150,10 @@ func ExportTemplates(opts TemplateExportOptions) (TemplateExportResult, error) {
 	}
 	cookie := opts.Cookie
 	if cookie == "" {
-		cookie = GetLoginCookieString(opts.URL, "TB_ACCESS_TOKEN")
+		cookie, err = GetLoginCookieString(opts.URL, "TB_ACCESS_TOKEN")
+		if err != nil {
+			return result, err
+		}
 	}
 	req := NewRequest(cookie, workspaceID)
 	workspace, err := req.GetWorkspace(workspaceID)

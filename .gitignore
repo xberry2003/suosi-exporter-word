@@ -2,4 +2,13 @@
 output/teambition/
 output/teambition-inventory/
 .gocache/
+.gocache-*/
 exports/
+runtime/
+logs/
+coverage.out
+*.test
+*.exe
+*.part
+__pycache__/
+*.pyc

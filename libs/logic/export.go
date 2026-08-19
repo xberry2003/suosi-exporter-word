@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,8 +18,14 @@ import (
 )
 
 type ExportOptions struct {
+	Context          context.Context
+	Cookie           string
+	LoginTimeout     time.Duration
+	ProfileDir       string
+	Progress         func(stage, message string)
 	URL              string
 	OutputRoot       string
+	LogRoot          string
 	Format           string
 	IncludeTemplates bool
 	Overwrite        bool
@@ -28,6 +35,12 @@ type ExportOptions struct {
 }
 
 func ExportWorkspace(opts ExportOptions) error {
+	if opts.Context == nil {
+		opts.Context = context.Background()
+	}
+	if err := opts.Context.Err(); err != nil {
+		return err
+	}
 	if opts.OutputRoot == "" {
 		opts.OutputRoot = "exports"
 	}
@@ -37,10 +50,14 @@ func ExportWorkspace(opts ExportOptions) error {
 	if err := os.MkdirAll(opts.OutputRoot, 0755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll("logs", 0755); err != nil {
+	logRoot := opts.LogRoot
+	if logRoot == "" {
+		logRoot = "logs"
+	}
+	if err := os.MkdirAll(logRoot, 0755); err != nil {
 		return err
 	}
-	logFile := filepath.Join("logs", "export_"+time.Now().Format("20060102_150405")+".log")
+	logFile := filepath.Join(logRoot, "export_"+time.Now().Format("20060102_150405")+".log")
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
@@ -60,10 +77,30 @@ func ExportWorkspace(opts ExportOptions) error {
 		return fmt.Errorf("URL 格式不正确: %s", opts.URL)
 	}
 	hashSpace := parts[4]
-	req := NewRequest("", hashSpace)
-	cookie := GetLoginCookieString(opts.URL, "TB_ACCESS_TOKEN")
-	req.cookie = cookie
+	req := NewRequest(opts.Cookie, hashSpace)
+	cookie := opts.Cookie
+	if cookie == "" {
+		loginTimeout := opts.LoginTimeout
+		if loginTimeout <= 0 {
+			loginTimeout = defaultLoginTimeout
+		}
+		loginCtx, cancelLogin := context.WithTimeout(opts.Context, loginTimeout)
+		defer cancelLogin()
+		reportExportProgress(opts, "authentication", "正在读取浏览器登录态")
+		logger.Printf("waiting for browser login timeout=%s profile=%s", loginTimeout, opts.ProfileDir)
+		var loginErr error
+		cookie, loginErr = GetLoginCookieStringContext(loginCtx, opts.URL, "TB_ACCESS_TOKEN", opts.ProfileDir)
+		if loginErr != nil {
+			logger.Printf("browser login failed: %v", loginErr)
+			return loginErr
+		}
+		req.cookie = cookie
+	} else {
+		logger.Println("using supplied authenticated session")
+	}
+	logger.Println("browser login ready")
 
+	reportExportProgress(opts, "loading", "登录完成，正在读取知识库目录")
 	workspace, err := req.GetWorkspace(hashSpace)
 	if err != nil {
 		return err
@@ -101,6 +138,7 @@ func ExportWorkspace(opts ExportOptions) error {
 	}
 	tree := buildNodeTree(nodes, hashSpace)
 	logger.Printf("workspace ready: %s/%s nodes=%d", orgName, spaceName, len(nodes))
+	reportExportProgress(opts, "exporting", fmt.Sprintf("知识库目录读取完成，正在导出 %d 个节点", len(nodes)))
 
 	if opts.DryRun {
 		logger.Println("dry-run enabled, only rendering tree")
@@ -168,11 +206,21 @@ func buildNodeTree(nodes []*Node, workspaceHash string) nodeTree {
 func exportChildren(req *Request, opts ExportOptions, logger *log.Logger, store *ManifestStore, parentDir string, parentTitle string, children []*treeNode) error {
 	sort.Slice(children, func(i, j int) bool { return children[i].Node.Title < children[j].Node.Title })
 	for _, child := range children {
+		if err := opts.Context.Err(); err != nil {
+			return err
+		}
+		reportExportProgress(opts, "exporting", "正在导出："+child.Node.Title)
 		if err := exportSingle(req, opts, logger, store, parentDir, parentTitle, child); err != nil {
 			logger.Printf("failed: %s %v", child.Node.Title, err)
 		}
 	}
 	return nil
+}
+
+func reportExportProgress(opts ExportOptions, stage, message string) {
+	if opts.Progress != nil {
+		opts.Progress(stage, message)
+	}
 }
 
 func exportSingle(req *Request, opts ExportOptions, logger *log.Logger, store *ManifestStore, parentDir string, parentTitle string, current *treeNode) error {

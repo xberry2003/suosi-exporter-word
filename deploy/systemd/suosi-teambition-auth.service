@@ -1,0 +1,18 @@
+[Unit]
+Description=Suosi Teambition authentication manager
+After=network-online.target suosi-teambition-browser.service
+Requires=suosi-teambition-browser.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/www/wwwroot/suosi-control
+EnvironmentFile=/www/wwwroot/suosi-control/.teambition.env
+Environment=TEAMBITION_CDP_URL=http://127.0.0.1:9222
+ExecStart=/usr/bin/python3 /www/wwwroot/suosi-control/runtime/auth/teambition_auth.py --listen 127.0.0.1:9881
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

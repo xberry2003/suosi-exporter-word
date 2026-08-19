@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>所思采集控制台</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <section id="authScreen" class="auth-screen" aria-labelledby="authTitle">
+    <div class="auth-intro">
+      <a class="brand" href="/" aria-label="所思采集控制台首页">
+        <span class="brand-mark" aria-hidden="true">S</span>
+        <span><strong>所思采集控制台</strong><small>数据采集与导出</small></span>
+      </a>
+      <div class="auth-intro-copy">
+        <p class="kicker">员工工作台</p>
+        <h1 id="authTitle">登录后开始采集</h1>
+        <p>使用公司员工姓名和密码进入。实习生账号到期后将无法继续使用。</p>
+      </div>
+      <p class="auth-note">账号由公司员工管理系统统一维护</p>
+    </div>
+    <div class="auth-panel">
+      <form id="loginForm" class="auth-form" novalidate>
+        <p class="kicker">账户登录</p>
+        <h2>进入控制台</h2>
+        <label>员工姓名<input name="name" autocomplete="username" required></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+        <p id="loginError" class="auth-error" role="alert" hidden></p>
+        <button class="button primary" type="submit">登录</button>
+        <div class="auth-links"><button type="button" data-auth-view="register">没有密码？去注册</button><button type="button" data-auth-view="recover">忘记密码？</button></div>
+      </form>
+      <form id="registerForm" class="auth-form" novalidate hidden>
+        <p class="kicker">首次注册</p>
+        <h2>设置登录密码</h2>
+        <label>员工姓名<input name="name" autocomplete="name" required></label>
+        <label>身份证号<input name="id_card" inputmode="text" required></label>
+        <label>手机号<input name="phone" inputmode="tel" autocomplete="tel" required></label>
+        <label>密码<input name="password" type="password" autocomplete="new-password" required></label>
+        <label>确认密码<input name="confirm_password" type="password" autocomplete="new-password" required></label>
+        <p id="registerError" class="auth-error" role="alert" hidden></p>
+        <button class="button primary" type="submit">注册并登录</button>
+        <div class="auth-links"><button type="button" data-auth-view="login">已有密码？去登录</button></div>
+      </form>
+      <form id="recoverForm" class="auth-form" novalidate hidden>
+        <p class="kicker">找回密码</p>
+        <h2>重设登录密码</h2>
+        <label>员工姓名<input name="name" autocomplete="name" required></label>
+        <label>身份证号<input name="id_card" inputmode="text" required></label>
+        <label>新密码<input name="password" type="password" autocomplete="new-password" required></label>
+        <label>确认新密码<input name="confirm_password" type="password" autocomplete="new-password" required></label>
+        <p id="recoverError" class="auth-error" role="alert" hidden></p>
+        <button class="button primary" type="submit">确认修改</button>
+        <div class="auth-links"><button type="button" data-auth-view="login">返回登录</button></div>
+      </form>
+    </div>
+  </section>
+
+  <div id="appShell" hidden>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="所思采集控制台首页">
+      <span class="brand-mark" aria-hidden="true">S</span>
+      <span><strong>所思采集控制台</strong><small>数据采集与导出</small></span>
+    </a>
+    <div class="topbar-actions"><span class="service-state"><span id="healthDot" class="state-dot"></span><span id="healthText">正在连接服务</span></span><button id="logoutButton" class="text-button" type="button">退出登录</button></div>
+  </header>
+
+  <main>
+    <section class="workspace" aria-label="新建采集任务">
+      <aside class="module-rail">
+        <div class="section-heading">
+          <span>采集模块</span>
+          <strong id="moduleCount">3</strong>
+        </div>
+        <nav id="moduleList" class="module-list" aria-label="选择采集模块">
+          <div class="skeleton module-skeleton"></div>
+          <div class="skeleton module-skeleton"></div>
+          <div class="skeleton module-skeleton"></div>
+        </nav>
+      </aside>
+
+      <section class="configuration">
+        <div class="configuration-header">
+          <div>
+            <p class="kicker">新建任务</p>
+            <h1 id="formTitle">选择采集模块</h1>
+            <p id="formDescription" class="muted">配置来源与输出策略，提交前会执行本机预检。</p>
+          </div>
+          <span id="credentialBadge" class="credential-badge">未选择</span>
+        </div>
+
+        <form id="jobForm" novalidate>
+          <div id="dynamicFields" class="form-grid"></div>
+          <div id="preflightPanel" class="preflight-panel" hidden></div>
+          <div id="formError" class="form-error" role="alert" hidden></div>
+          <div class="form-actions">
+            <button id="preflightButton" class="button secondary" type="button">执行预检</button>
+            <button id="submitButton" class="button primary" type="submit">启动采集</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="job-monitor" aria-live="polite">
+        <div class="section-heading">
+          <span>当前任务</span>
+          <button id="refreshButton" class="text-button" type="button">刷新</button>
+        </div>
+        <div id="jobDetail" class="job-empty">
+          <span class="empty-index">00</span>
+          <strong>尚未选择任务</strong>
+          <p>启动新任务或从下方历史记录中打开。</p>
+        </div>
+      </aside>
+    </section>
+
+    <section class="history-section" aria-labelledby="historyTitle">
+      <div class="history-header">
+        <div>
+          <p class="kicker">运行记录</p>
+          <h2 id="historyTitle">任务历史</h2>
+        </div>
+        <div class="history-summary"><strong id="runningCount">0</strong> 个运行中 <span></span> 最近 50 条</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>任务</th><th>模块</th><th>状态</th><th>当前阶段</th><th>创建时间</th><th><span class="sr-only">操作</span></th></tr></thead>
+          <tbody id="jobRows"><tr><td colspan="6"><div class="table-loading">正在读取任务记录</div></td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  </div>
+  <script src="app.js" defer></script>
+</body>
+</html>
